@@ -1,0 +1,11 @@
+test commands for local
+
+python pipeline/split.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline data
+
+python pipeline/preprocess.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline a 2 data
+
+python pipeline/motion.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline a 2 data
+
+python pipeline/detection.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline true a 2 data
+
+python pipeline/analysis.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline true a 2 data
