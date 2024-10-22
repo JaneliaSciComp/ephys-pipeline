@@ -36,8 +36,8 @@ for probe in a b; do
 
         # Submit the first processing job
         PROC_JOB_ID=$(bsub -w "done(${MERGE_JOB_ID})" \
-                         -J "proc_recordings_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
-                         -o "${LOG_DIR}/proc_recordings_${probe}_shank_${shank}.log" \
+                         -J "preprocess_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
+                         -o "${LOG_DIR}/preprocess_${probe}_shank_${shank}.log" \
                          -n 32 \
                          "bash -c 'source ~/.bashrc && conda activate ${CONDA_ENV} && python preprocess.py ${FILEPATH} ${probe} ${shank} ${DATAPATH}'" \
                          | awk '{print $2}' | tr -d '<>')
@@ -50,8 +50,8 @@ for probe in a b; do
 
         # Submit DREDge job if processing is successful
         DREDGE_JOB_ID=$(bsub -w "done(${PROC_JOB_ID})" \
-                         -J "dredge_recordings_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
-                         -o "${LOG_DIR}/dredge_recordings_${probe}_shank_${shank}.log" \
+                         -J "motion_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
+                         -o "${LOG_DIR}/motion_${probe}_shank_${shank}.log" \
                          -n 32 \
                          "bash -c 'source ~/.bashrc && conda activate ${CONDA_ENV} && python motion.py ${FILEPATH} ${probe} ${shank} ${DATAPATH}'" \
                          | awk '{print $2}' | tr -d '<>')
@@ -66,8 +66,8 @@ for probe in a b; do
 
             # Submit KS sorting job and capture the job ID
             KS_JOB_ID=$(bsub -w "done(${DREDGE_JOB_ID})" \
-                             -J "ks_probe_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
-                             -o "${LOG_DIR}/ks_probe_${probe}_shank_${shank}_dredge_${dredge}.log" \
+                             -J "detection_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
+                             -o "${LOG_DIR}/detection_${probe}_shank_${shank}_dredge_${dredge}.log" \
                              -n 12 \
                              -gpu "num=1" \
                              -q "gpu_tesla" \
@@ -84,8 +84,8 @@ for probe in a b; do
 
             # Submit create_recordings.py job with a dependency on KS job completion
             bsub -w "done(${KS_JOB_ID})" \
-                 -J "create_recordings_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
-                 -o "${LOG_DIR}/run_movement_analysis_${probe}_shank_${shank}_dredge_${dredge}.log" \
+                 -J "analysis_${probe}_shank_${shank}_$(basename "$FILEPATH")" \
+                 -o "${LOG_DIR}/analysis_${probe}_shank_${shank}_dredge_${dredge}.log" \
                  -n 16 \
                  "bash -c 'source ~/.bashrc && conda activate ${CONDA_ENV} && python analysis.py ${FILEPATH} ${dredge} ${probe} ${shank} ${DATAPATH}')"
                  done
