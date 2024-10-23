@@ -45,7 +45,7 @@ cd ephys-pipeline/pipeline/
 chmod +x analysis.py config.py detection.py motion.py preprocess.py split.py utils.py
 cd ..
 cd scripts
-chmod +x run_pipeline.sh
+chmod +x run_pipeline.sh run_chunk_pipeline.sh
 cd ..
 cd ..
 ```

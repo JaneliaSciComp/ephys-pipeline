@@ -56,20 +56,23 @@ def save_shanks(shank_dict, probe_names, output_folder, job_kwargs, chunk=True):
     job_kwargs (dict): dictionary with job arguments
     '''
     for probe_x in probe_names:
+        print(probe_names)
         for shank in shank_dict[probe_x]:
+            print(shank)
             shank_folder = output_folder / probe_x / f"shank_{shank}"
             os.makedirs(shank_folder, exist_ok=True)
             total_t = int(shank_dict[probe_x][shank].get_total_duration())
             if chunk:
                 n_chunk = 0
                 for time_chunk in range(0, total_t, cfg.CHUNK_SIZE):
+                    print(n_chunk)
                     raw_recording_path = shank_folder / "raw_recording" / f"chunk_{n_chunk}"
                     shank_dict[probe_x][shank].save(folder=raw_recording_path, format='binary', **job_kwargs, time_frame=(time_chunk, time_chunk + cfg.CHUNK_SIZE), overwrite=True)
                     n_chunk += 1
-                    return n_chunk
             else:
                 raw_recording_path = shank_folder / "raw_recording" / "total"
                 shank_dict[probe_x][shank].save(folder=raw_recording_path, format='binary', **job_kwargs, overwrite=True)
+    return n_chunk
 
 if __name__ == "__main__":
 
