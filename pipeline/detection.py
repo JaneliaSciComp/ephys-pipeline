@@ -19,10 +19,14 @@ def process_traces(recording_path, probe):
     return recording
 
 
-def replace_params(file, output_path, n_channels):
+def replace_params(file, output_path, n_channels, chunk_n):
+    try:
+        offset = int(chunk_n) * cfg.CHUNK_SIZE * cfg.SAMPLE_RATE
+    except ValueError:
+        offset = 0
     params_content = (
         f"n_channels_dat = {int(n_channels)}\n"
-        "offset = 0\n"
+        "offset = {offset}\n"
         "sample_rate = 30000\n"
         "dtype = 'float32'\n"
         "hp_filtered = False\n"
@@ -34,7 +38,7 @@ def replace_params(file, output_path, n_channels):
         f.write(params_content)
 
 
-def run_kilosort(recording, ks_path, src_dir, kilosort_params):
+def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
 
     sorting_KS4 = si.run_sorter(
         sorter_name="kilosort4",
@@ -72,8 +76,8 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params):
                     copy_binary=False,
                     n_jobs=-1)
             
-    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK)
-    replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK)
+    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n)
+    replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK, chunk_n)
 
     for file_path in glob.glob(os.path.join(src_dir, '*')):
         filename = os.path.basename(file_path)
@@ -92,10 +96,10 @@ if __name__ == "__main__":
     probe = sys.argv[3]
     shank = sys.argv[4]
     data_path = sys.argv[5]
-    chunk = sys.argv[6]
+    chunk_n = sys.argv[6]
 
     try:
-        chunk = int(chunk)
+        chunk = int(chunk_n)
         chunk = f"chunk_{chunk}"
     except ValueError:
         chunk = 'total'
@@ -120,4 +124,4 @@ if __name__ == "__main__":
 
     # Process traces
     recording = process_traces(recording_path, probe=probe)
-    run_kilosort(recording, ks_path, src_dir, kilosort_params)
+    run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n)
