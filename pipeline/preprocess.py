@@ -103,10 +103,10 @@ if __name__ == "__main__":
     recording, artifact_indexes = process_traces(recording_path, shank_probe, cfg.N_CHANNELS_SHANK)
 
     # Save processed recording
-    artifact_path = shank_folder / "recording/"
+    artifact_path = shank_folder / "recording"
     recording.save(folder=artifact_path, format='binary', **cfg.JOB_KWARGS, overwrite=True)
 
     # Save artifacts
     artifact_indexes = np.array(artifact_indexes)
-    np.save(str(artifact_path) + "/artifact_indexes.npy", artifact_indexes)
+    np.save(artifact_path / "artifact_indexes.npy", artifact_indexes)
 

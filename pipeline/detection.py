@@ -70,7 +70,7 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params):
                     compute_amplitudes=True,
                     compute_pc_features=True,
                     copy_binary=False,
-                    n_jobs=1)
+                    n_jobs=-1)
             
     replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK)
     replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK)

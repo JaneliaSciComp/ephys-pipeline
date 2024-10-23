@@ -41,7 +41,13 @@ FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_08_06_npx_lon
 Before running the scripts, ensure the necessary files are executable by setting the correct permissions:
 
 ```bash
-chmod +x run_dredge.py run_ks.py run_movement_analysis.py run_spike_pipe.sh create_recordings.py
+cd ephys-pipeline/pipeline/
+chmod +x analysis.py config.py detection.py motion.py preprocess.py split.py utils.py
+cd ..
+cd scripts
+chmod +x run_pipeline.sh
+cd ..
+cd ..
 ```
 
 ### Running the Spike Sorting Pipeline
