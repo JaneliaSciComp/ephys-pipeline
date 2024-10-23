@@ -36,7 +36,8 @@ def split_recording(recording_files, probe_names, global_probe_data):
     for probe_x in probe_names:
         recordings = []
         for recording_file in recording_files[probe_x]:
-            recording = se.read_binary(recording_file, dtype='int16', sampling_frequency=30000, num_channels=384)
+            recording = se.read_binary(recording_file, dtype='int32', sampling_frequency=cfg.SAMPLE_RATE, num_channels=cfg.N_CHANNELS_PROBE)
+            print(recording.get_total_duration())
             if recording.get_num_frames() == 0:
                 print(f"Warning: The recording file {recording_file} is empty.")
             else:
@@ -59,6 +60,7 @@ def save_shanks(shank_dict, probe_names, output_folder, job_kwargs):
             shank_folder = output_folder / probe_x / f"shank_{shank}"
             os.makedirs(shank_folder, exist_ok=True)
             raw_recording_path = shank_folder / "raw_recording"
+            print(shank_dict[probe_x][shank].get_total_duration())
             shank_dict[probe_x][shank].save(folder=raw_recording_path, format='binary', **job_kwargs, overwrite=True)
 
 if __name__ == "__main__":

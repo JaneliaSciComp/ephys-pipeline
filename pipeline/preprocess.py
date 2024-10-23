@@ -56,7 +56,8 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
     recording (se.RecordingExtractor): processed recording
     artifact_indexes (np.array): array with artifact indices
     '''
-    recording = se.read_binary(recording_path, dtype='int16', sampling_frequency=cfg.SAMPLE_RATE, num_channels=n_channels)
+    recording = se.read_binary(recording_path, dtype='int32', sampling_frequency=cfg.SAMPLE_RATE, num_channels=n_channels)
+    print(recording.get_total_duration())
     num_cpus = num_cpus or os.cpu_count()
     total_frames = recording.get_num_frames()
     chunk_size = total_frames // num_cpus

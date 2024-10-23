@@ -9,8 +9,9 @@ import torch
 from shutil import copyfile
 import os
 import glob
-import numpy as np
 
+
+job_kwargs = cfg.JOB_KWARGS
 
 def process_traces(recording_path, probe):
     recording = se.read_binary(recording_path, sampling_frequency=cfg.SAMPLE_RATE, dtype='float32', num_channels=cfg.N_CHANNELS_SHANK)
@@ -34,6 +35,7 @@ def replace_params(file, output_path, n_channels):
 
 
 def run_kilosort(recording, ks_path, src_dir, kilosort_params):
+
     sorting_KS4 = si.run_sorter(
         sorter_name="kilosort4",
         recording=recording,
@@ -45,16 +47,22 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params):
         **kilosort_params
     )
 
-    phy_sorting = si.read_phy(folder_path=str(ks_path) + '/sorter_output')
+    phy_sorting = si.read_phy(folder_path=str(ks_path / 'sorter_output'))
     phy_sorting = si.remove_excess_spikes(sorting=sorting_KS4, recording=recording)
 
-    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, **cfg.JOB_KWARGS)
+    print('sorting analyzer')
 
-    we.compute(['random_spikes', 'waveforms', 'templates', 'noise_levels'], **cfg.JOB_KWARGS)
+    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=-1)
+
+    print('compute')
+
+    we.compute(['random_spikes', 'waveforms', 'templates', 'noise_levels'], n_jobs=-1)
     _ = we.compute('correlograms')
-    _ = we.compute('spike_amplitudes', **cfg.JOB_KWARGS)
+    _ = we.compute('spike_amplitudes', n_jobs=-1)
 
     phy_folder = ks_path / 'phy'
+
+    print('export')
 
     sexp.export_to_phy(we,
                     output_folder=str(phy_folder),
@@ -62,9 +70,9 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params):
                     compute_amplitudes=True,
                     compute_pc_features=True,
                     copy_binary=False,
-                    **cfg.JOB_KWARGS)
+                    n_jobs=1)
             
-    replace_params(recording_path, src_dir, n_channels=cfg.N_CHANNELS_SHANK)
+    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK)
     replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK)
 
     for file_path in glob.glob(os.path.join(src_dir, '*')):
@@ -90,7 +98,7 @@ if __name__ == "__main__":
     if dredge:
         data_folder = data_folder / 'dredge' 
 
-    recording_path = str(data_folder) + '/recording/traces_cached_seg0.raw'
+    recording_path = data_folder /  'recording' / 'traces_cached_seg0.raw'
     ks_path = data_folder / 'kilosort4'
     src_dir = ks_path / 'sorter_output'
 
@@ -107,16 +115,24 @@ if __name__ == "__main__":
     # Process traces
     recording = process_traces(recording_path, probe=probe)
         
-    if chunk is None:
-        run_kilosort(recording, ks_path, src_dir, kilosort_params)
+    if chunk == 'false':
+        total_folder = ks_path / f'total'
+        total_folder.mkdir(parents=True, exist_ok=True)
+        run_kilosort(recording, total_folder, src_dir, kilosort_params)
     
     else:
         chunk = int(chunk)
         time_chunk = chunk * 60
         chunk_counter = 1
 
-        for i in range(0, recording.get_num_frames(), time_chunk):
-            sub_recording = recording.time_slice(i, i + time_chunk)
+        t_length = int(recording.get_total_duration())
+        print(f"Total duration: {t_length} seconds")
+        for i in range(0, t_length, time_chunk):
+            end_frame = i + time_chunk
+            if end_frame > recording.get_num_frames():
+                sub_recording = recording.time_slice(i)
+            else:
+                sub_recording = recording.time_slice(i, i + time_chunk)
             
             # Create subfolder for chunked output
             chunk_folder = ks_path / f'chunk_{chunk_counter}'

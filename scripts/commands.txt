@@ -6,6 +6,7 @@ python pipeline/preprocess.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline 
 
 python pipeline/motion.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline a 2 data
 
-python pipeline/detection.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline true a 2 data
+python pipeline/detection.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline true a 2 data 1
+python pipeline/detection.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline false a 2 data 1
 
 python pipeline/analysis.py /home/sheppardj@hhmi.org/Documents/ephys-pipeline true a 2 data
