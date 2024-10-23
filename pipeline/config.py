@@ -13,3 +13,4 @@ KILOSORT_PARAMS = {
     'batch_size': 30000,
 }
 ANALYSIS_TSTEP = 10
+CHUNK_SIZE = 60 * 60 # in seconds

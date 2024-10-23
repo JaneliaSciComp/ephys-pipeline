@@ -91,11 +91,18 @@ if __name__ == "__main__":
     probe = sys.argv[2]
     shank = sys.argv[3]
     data_path = sys.argv[4]
+    chunk = sys.argv[5]
+
+    try:
+        chunk = int(chunk)
+        chunk = f"chunk_{chunk}"
+    except ValueError:
+        chunk = 'total'
 
     data_folder = user_input / data_path
     output_folder = data_folder / "output"
     shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0"
-    recording_path = shank_folder / "raw_recording" / "traces_cached_seg0.raw"
+    recording_path = shank_folder / "raw_recording" / chunk / "traces_cached_seg0.raw"
 
     shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE)
 
@@ -103,7 +110,7 @@ if __name__ == "__main__":
     recording, artifact_indexes = process_traces(recording_path, shank_probe, cfg.N_CHANNELS_SHANK)
 
     # Save processed recording
-    artifact_path = shank_folder / "recording"
+    artifact_path = shank_folder / "recording" / chunk
     recording.save(folder=artifact_path, format='binary', **cfg.JOB_KWARGS, overwrite=True)
 
     # Save artifacts

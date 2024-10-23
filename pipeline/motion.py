@@ -29,12 +29,19 @@ if __name__ == "__main__":
     probe = sys.argv[2]
     shank = sys.argv[3]
     data_path = sys.argv[4]
+    chunk = sys.argv[5]
+
+    try:
+        chunk = int(chunk)
+        chunk = f"chunk_{chunk}"
+    except ValueError:
+        chunk = 'total'
 
     data_folder = user_input / data_path
     output_folder = data_folder / "output"
     shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0"
-    recording_path = str(shank_folder) + "/recording/traces_cached_seg0.raw"
-    dredge_path = shank_folder / "dredge"
+    recording_path = shank_folder / "recording" / chunk / "traces_cached_seg0.raw"
+    dredge_path = shank_folder / "dredge" / chunk
 
     shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE)
 

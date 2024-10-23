@@ -94,12 +94,18 @@ if __name__ == "__main__":
     data_path = sys.argv[5]
     chunk = sys.argv[6]
 
+    try:
+        chunk = int(chunk)
+        chunk = f"chunk_{chunk}"
+    except ValueError:
+        chunk = 'total'
+
     data_folder = user_input / data_path / "output" / f"probe_{probe}" / f"shank_{shank}.0"
     if dredge:
         data_folder = data_folder / 'dredge' 
 
-    recording_path = data_folder /  'recording' / 'traces_cached_seg0.raw'
-    ks_path = data_folder / 'kilosort4'
+    recording_path = data_folder / chunk / 'recording'  / 'traces_cached_seg0.raw'
+    ks_path = data_folder / 'kilosort4' / chunk
     src_dir = ks_path / 'sorter_output'
 
     # Use GPU if available
@@ -114,33 +120,4 @@ if __name__ == "__main__":
 
     # Process traces
     recording = process_traces(recording_path, probe=probe)
-        
-    if chunk == 'false':
-        total_folder = ks_path / f'total'
-        total_folder.mkdir(parents=True, exist_ok=True)
-        run_kilosort(recording, total_folder, src_dir, kilosort_params)
-    
-    else:
-        chunk = int(chunk)
-        time_chunk = chunk * 60
-        chunk_counter = 1
-
-        t_length = int(recording.get_total_duration())
-        print(f"Total duration: {t_length} seconds")
-        for i in range(0, t_length, time_chunk):
-            end_frame = i + time_chunk
-            if end_frame > recording.get_num_frames():
-                sub_recording = recording.time_slice(i)
-            else:
-                sub_recording = recording.time_slice(i, i + time_chunk)
-            
-            # Create subfolder for chunked output
-            chunk_folder = ks_path / f'chunk_{chunk_counter}'
-            chunk_folder.mkdir(parents=True, exist_ok=True)
-
-            run_kilosort(sub_recording, chunk_folder, src_dir, kilosort_params)
-
-            print(f"Processed chunk {chunk_counter} in folder {chunk_folder}")
-            chunk_counter += 1
-
-            del sub_recording
+    run_kilosort(recording, ks_path, src_dir, kilosort_params)

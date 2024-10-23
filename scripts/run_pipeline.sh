@@ -6,7 +6,7 @@ FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_09_04_npx_3dm
 DATAPATH="data"
 CODEPATH="$HOME/ephys-pipeline/pipeline"
 LOG_DIR="$HOME/ephys-pipeline/logs/$(basename "$FILEPATH")"
-CHUNK=60
+CHUNK=false
 
 # Create the log folder if it doesn't exist
 mkdir -p "$HOME/ephys-pipeline/logs/"
