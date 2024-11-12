@@ -65,9 +65,13 @@ def save_shanks(shank_dict, probe_names, output_folder, job_kwargs, chunk=True):
             if chunk:
                 n_chunk = 0
                 for time_chunk in range(0, total_t, cfg.CHUNK_SIZE):
-                    print(n_chunk)
+                    print(f'Saving chunk {n_chunk} for {probe_x} shank {shank}')
                     raw_recording_path = shank_folder / "raw_recording" / f"chunk_{n_chunk}"
-                    shank_dict[probe_x][shank].save(folder=raw_recording_path, format='binary', **job_kwargs, time_frame=(time_chunk, time_chunk + cfg.CHUNK_SIZE), overwrite=True)
+                    try:
+                        rec_chunk = shank_dict[probe_x][shank].time_slice(time_chunk, time_chunk + cfg.CHUNK_SIZE)
+                    except AssertionError:
+                        rec_chunk = shank_dict[probe_x][shank].time_slice(time_chunk, None)
+                    rec_chunk.save(folder=raw_recording_path, format='binary', **job_kwargs, overwrite=True)
                     n_chunk += 1
             else:
                 raw_recording_path = shank_folder / "raw_recording" / "total"
@@ -82,7 +86,11 @@ if __name__ == "__main__":
     chunk = sys.argv[3] == 'true'
 
     data_folder = user_input / data_path
-    output_folder = data_folder / 'output'
+
+    if chunk:
+        output_folder = data_folder / 'output'
+    else:
+        output_folder = data_folder / 'output_total'
 
     os.makedirs(output_folder, exist_ok=True)
 
@@ -93,4 +101,6 @@ if __name__ == "__main__":
     recording_files = collect_files(data_folder, probe_names)
     shank_dict = split_recording(recording_files, probe_names, global_probe_data)
     n_chunks = save_shanks(shank_dict, probe_names, output_folder, cfg.JOB_KWARGS, chunk=chunk)
-    print(n_chunks)
+    # After processing all probes and shanks
+    print(f"Chunks Processed: {n_chunks}")  # Ensures the bash script can extract this line
+

@@ -8,6 +8,10 @@ import os
 from tqdm import tqdm
 import sys
 
+
+### NOT PROPERLY DONE IT WILL NOT WORK AS IS :)))))
+
+
 def find_best_channel(results_dir):
     chan_map = np.load(results_dir / 'channel_map.npy')
     templates = np.load(results_dir / 'templates.npy')
@@ -236,6 +240,14 @@ if __name__ == "__main__":
     probe = sys.argv[3]
     shank = sys.argv[4]
     data_path = sys.argv[5]
+
+    try:
+        chunk = int(chunk)
+        chunk = f"chunk_{chunk}"
+        output = 'output'
+    except ValueError:
+        chunk = 'total'
+        output = 'output_total'
 
     data_folder = user_input / data_path
     data_folder = data_folder / "output" / f"probe_{probe}" / f"shank_{shank}.0"

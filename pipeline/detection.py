@@ -1,3 +1,4 @@
+import numpy as np
 import utils as ut
 import config as cfg
 import spikeinterface.extractors as se
@@ -26,7 +27,7 @@ def replace_params(file, output_path, n_channels, chunk_n):
         offset = 0
     params_content = (
         f"n_channels_dat = {int(n_channels)}\n"
-        "offset = {offset}\n"
+        f"offset = 0\n"
         "sample_rate = 30000\n"
         "dtype = 'float32'\n"
         "hp_filtered = False\n"
@@ -56,13 +57,13 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
 
     print('sorting analyzer')
 
-    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=-1)
+    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=12)
 
     print('compute')
 
-    we.compute(['random_spikes', 'waveforms', 'templates', 'noise_levels'], n_jobs=-1)
+    we.compute(['random_spikes', 'waveforms', 'templates', 'noise_levels'], n_jobs=12)
     _ = we.compute('correlograms')
-    _ = we.compute('spike_amplitudes', n_jobs=-1)
+    _ = we.compute('spike_amplitudes', n_jobs=12)
 
     phy_folder = ks_path / 'phy'
 
@@ -74,10 +75,10 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
                     compute_amplitudes=True,
                     compute_pc_features=True,
                     copy_binary=False,
-                    n_jobs=-1)
+                    n_jobs=12)
             
-    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n)
-    replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK, chunk_n)
+    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
+    replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
 
     for file_path in glob.glob(os.path.join(src_dir, '*')):
         filename = os.path.basename(file_path)
@@ -100,15 +101,19 @@ if __name__ == "__main__":
 
     try:
         chunk = int(chunk_n)
-        chunk = f"chunk_{chunk}"
+        chunk = f"chunk_{chunk_n}"
+        output = 'output'
     except ValueError:
         chunk = 'total'
+        output = 'output_total'
 
-    data_folder = user_input / data_path / "output" / f"probe_{probe}" / f"shank_{shank}.0"
+    data_folder = user_input / data_path / output / f"probe_{probe}" / f"shank_{shank}.0"
     if dredge:
-        data_folder = data_folder / 'dredge' 
-
-    recording_path = data_folder / chunk / 'recording'  / 'traces_cached_seg0.raw'
+        data_folder = data_folder / 'dredge'
+        recording_path = data_folder / chunk / 'recording' / 'traces_cached_seg0.raw'
+    else:
+        recording_path = data_folder  / 'recording'  / chunk / 'traces_cached_seg0.raw'
+        
     ks_path = data_folder / 'kilosort4' / chunk
     src_dir = ks_path / 'sorter_output'
 

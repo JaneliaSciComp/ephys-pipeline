@@ -1,6 +1,6 @@
 PROBE_FILE = "/groups/voigts/voigtslab/probes/np_96_191.json"
 SHANK_FILE = "/groups/voigts/voigtslab/probes/np_shank.json"
-JOB_KWARGS = dict(n_jobs=-1, chunk_duration="1s", progress_bar=True) # SWITCH BACK TO -1
+JOB_KWARGS = dict(n_jobs=16, chunk_duration="1s", progress_bar=True) # SWITCH BACK TO -1
 PROBE_NAMES = ['probe_a', 'probe_b']
 N_CHANNELS_PROBE = 384
 N_CHANNELS_SHANK = 96

@@ -34,11 +34,13 @@ if __name__ == "__main__":
     try:
         chunk = int(chunk)
         chunk = f"chunk_{chunk}"
+        output = 'output'
     except ValueError:
         chunk = 'total'
+        output = 'output_total'
 
     data_folder = user_input / data_path
-    output_folder = data_folder / "output"
+    output_folder = data_folder / output
     shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0"
     recording_path = shank_folder / "recording" / chunk / "traces_cached_seg0.raw"
     dredge_path = shank_folder / "dredge" / chunk
