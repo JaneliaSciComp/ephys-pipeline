@@ -25,12 +25,13 @@ def process_dredge(recording_path, shank_probe, dredge_path):
 if __name__ == "__main__":
 
     # arguments for input
-    user_input = Path(sys.argv[1])
-    probe = sys.argv[2]
-    shank = sys.argv[3]
-    data_path = sys.argv[4]
-    chunk = sys.argv[5]
-
+    user_input = Path(sys.argv[1]) # Path to the data folder
+    probe = sys.argv[2] # Probe number
+    shank = sys.argv[3] # Shank number
+    data_path = sys.argv[4] # Path to the data folder
+    chunk = sys.argv[5] # Chunk number
+    
+    # Bad code to handle whether data chunked or not
     try:
         chunk = int(chunk)
         chunk = f"chunk_{chunk}"
@@ -39,12 +40,14 @@ if __name__ == "__main__":
         chunk = 'total'
         output = 'output_total'
 
+    # Paths
     data_folder = user_input / data_path
     output_folder = data_folder / output
     shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0"
     recording_path = shank_folder / "recording" / chunk / "traces_cached_seg0.raw"
     dredge_path = shank_folder / "dredge" / chunk
-
+    # Load probe
     shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE)
-
+    
+    # Process motion
     process_dredge(recording_path, shank_probe, dredge_path)
