@@ -17,13 +17,17 @@ def get_artifacts(args):
     Returns:
     artifact_idx_filtered (np.array): array with artifact indices
     '''
+    # I just wanted to try and use args instead of unpacking it
+    # Seemed reasonable as user never interacts with this function
     recording, channels, start_idx, end_idx = args
+    # Get traces from the recording
     channel_data = recording.get_traces(start_frame=start_idx, end_frame=end_idx, channel_ids=channels)
-    filter_array = channel_data == 0
-    artifact_indices = np.nonzero(filter_array)[0] + start_idx
-    diffs = np.diff(artifact_indices)
-    non_sequential_indices = np.where(diffs != 1)[0] + 1
-    non_sequential_indices = np.insert(non_sequential_indices, 0, 0)
+    filter_array = channel_data == 0 # Get all the zeros in the traces
+    artifact_indices = np.nonzero(filter_array)[0] + start_idx # Get the indices of the zeros
+    diffs = np.diff(artifact_indices) # Get the difference between the indices
+    non_sequential_indices = np.where(diffs != 1)[0] + 1 # Get the indices where the difference is not 1
+    non_sequential_indices = np.insert(non_sequential_indices, 0, 0) # Insert 0 at the beginning
+    # Bad code to avoid index error
     try:
         artifact_idx_filtered = artifact_indices[non_sequential_indices]
     except IndexError:
@@ -38,12 +42,14 @@ def phase_shift(recording, n_channels):
     Returns:
     recording (se.RecordingExtractor): recording extractor object with phase shift
     '''
-    banks_phase_shift = [1]
-    num_bank = 48
-    phase_shift_arr = np.zeros(int(n_channels))
+    banks_phase_shift = [1] # Define banks for phase shift
+    num_bank = 48 # Define number of sites per bank
+    
+    # Create array with phase shift
+    phase_shift_arr = np.zeros(int(n_channels)) # Create array with zeros
     for i in banks_phase_shift:
-        phase_shift_arr[(i-1)*num_bank:i*num_bank] = np.pi / 2
-    recording = spre.phase_shift(recording, inter_sample_shift=phase_shift_arr)
+        phase_shift_arr[(i-1)*num_bank:i*num_bank] = np.pi / 2 # Set phase shift to pi/2
+    recording = spre.phase_shift(recording, inter_sample_shift=phase_shift_arr) # Phase shift the recording
     return recording
 
 def process_traces(recording_path, p, n_channels, num_cpus=None):
@@ -56,14 +62,20 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
     recording (se.RecordingExtractor): processed recording
     artifact_indexes (np.array): array with artifact indices
     '''
+    # Load recording
     recording = se.read_binary(recording_path, dtype='int32', sampling_frequency=cfg.SAMPLE_RATE, num_channels=n_channels)
+    # User sanity check
     print(recording.get_total_duration())
+    # Get number of cpus from path or from system
     num_cpus = num_cpus or os.cpu_count()
-    total_frames = recording.get_num_frames()
-    chunk_size = total_frames // num_cpus
 
-    chunks = []
-    step = 10
+    total_frames = recording.get_num_frames() # Get total number of frames
+    chunk_size = total_frames // num_cpus # Get size of data to be processed by each cpu core
+
+    chunks = [] # List to store chunks of data
+
+    step = 10 # Number of channels to process at a time
+    # Loop through the all channels in steps of 10 and create inputs for the get_artifacts function
     for channel_start in range(0, n_channels, step):
         channel_end = min(channel_start + step, n_channels)
         for i in range(num_cpus):
@@ -71,14 +83,21 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
             end_idx = (i + 1) * chunk_size if (i + 1) * chunk_size < total_frames else total_frames
             chunks.append((recording, list(range(channel_start, channel_end)), start_idx, end_idx))
 
+    # Process traces in parallel
     with Pool(num_cpus) as pool:
         artifact_results = list(tqdm(pool.imap(get_artifacts, chunks), total=len(chunks), desc="Detecting Artifacts"))
+    # Get unique artifact indexes
     artifact_indexes = np.unique(np.concatenate(artifact_results))
 
+    # Spike interface functions to process traces
+    # Remove artifacts
     recording = spre.remove_artifacts(recording, list_triggers=artifact_indexes,
                                       ms_before=250, ms_after=250, mode='linear')
+    # Phase shift the recording as Neuropixels probes have a phase shift
     recording = phase_shift(recording, n_channels)
+    # Bandpass filter the recording
     recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='float32')
+    # Set the probe geometry to do median removal
     recording = recording.set_probe(p)
     recording = spre.common_reference(recording, reference='local', operator='median')
     
@@ -93,6 +112,7 @@ if __name__ == "__main__":
     data_path = sys.argv[4]
     chunk = sys.argv[5]
 
+    # Rough way to check if the data has been chunked - needs to be improved
     try:
         chunk = int(chunk)
         chunk = f"chunk_{chunk}"
@@ -101,12 +121,13 @@ if __name__ == "__main__":
         chunk = 'total'
         output = 'output_total'
 
-    data_folder = user_input / data_path
-    output_folder = data_folder / output
-    shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0"
-    recording_path = shank_folder / "raw_recording" / chunk / "traces_cached_seg0.raw"
+    # File paths
+    data_folder = user_input / data_path # Path to the data folder
+    output_folder = data_folder / output # Path to the where output data will be saved
+    shank_folder = output_folder / f"probe_{probe}" / f"shank_{shank}.0" # Path to the shank folder
+    recording_path = shank_folder / "raw_recording" / chunk / "traces_cached_seg0.raw" # Path to the raw recording
 
-    shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE)
+    shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE) # Load the shank probe
 
     # Process traces and artifacts
     recording, artifact_indexes = process_traces(recording_path, shank_probe, cfg.N_CHANNELS_SHANK)
