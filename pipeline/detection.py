@@ -15,12 +15,28 @@ import glob
 job_kwargs = cfg.JOB_KWARGS
 
 def process_traces(recording_path, probe):
+    '''
+    Load traces from binary file and set probe information
+    Input:
+        recording_path: Path to the binary file
+        probe: Probe information
+    Output:
+        recording: Recording object with probe information
+    '''
     recording = se.read_binary(recording_path, sampling_frequency=cfg.SAMPLE_RATE, dtype='float32', num_channels=cfg.N_CHANNELS_SHANK)
     recording = recording.set_probe(probe)
     return recording
 
 
 def replace_params(file, output_path, n_channels, chunk_n):
+    '''
+    Replace the params.py file for Phy in the output folder with the correct number of channels and offset
+    Input:
+        file: Path to the binary file
+        output_path: Path to the output folder
+        n_channels: Number of channels
+        chunk_n: Chunk number
+    '''
     try:
         offset = int(chunk_n) * cfg.CHUNK_SIZE * cfg.SAMPLE_RATE
     except ValueError:
@@ -40,7 +56,19 @@ def replace_params(file, output_path, n_channels, chunk_n):
 
 
 def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
-
+    '''
+    Run Kilosort on the recording
+    Input:
+        recording: Recording object
+        ks_path: Path to the output folder
+        src_dir: Path to the source folder
+        kilosort_params: Kilosort parameters
+        chunk_n: Chunk number
+    Output:
+        Spikes detected by Kilosort
+        Data exported for Phy
+    '''
+    # Run Kilosort using spikeinterface
     sorting_KS4 = si.run_sorter(
         sorter_name="kilosort4",
         recording=recording,
@@ -51,24 +79,28 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
         remove_existing_folder=True,
         **kilosort_params
     )
-
+    # Read phy outputs
     phy_sorting = si.read_phy(folder_path=str(ks_path / 'sorter_output'))
+
+    # Running on cluster gives an issue where some spikes are detected outside the recording
+    # Using spikeinterface function to remove those spikes
     phy_sorting = si.remove_excess_spikes(sorting=sorting_KS4, recording=recording)
 
-    print('sorting analyzer')
-
+    # Create sorting analyzer to recompute some metrics
+    print('Sorting Analyzer')
     we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=12)
 
-    print('compute')
-
+    # Compute metrics
+    print('Compute')
     we.compute(['random_spikes', 'waveforms', 'templates', 'noise_levels'], n_jobs=12)
     _ = we.compute('correlograms')
     _ = we.compute('spike_amplitudes', n_jobs=12)
 
+    # Phy path
     phy_folder = ks_path / 'phy'
 
+    # Export to Phy
     print('export')
-
     sexp.export_to_phy(we,
                     output_folder=str(phy_folder),
                     remove_if_exists=True,
@@ -76,10 +108,12 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
                     compute_pc_features=True,
                     copy_binary=False,
                     n_jobs=12)
-            
+    
+    # Replace params.py file in Phy folders - also needed in KS folder
     replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
     replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
 
+    # Copying files created by Kilosort to Phy folder
     for file_path in glob.glob(os.path.join(src_dir, '*')):
         filename = os.path.basename(file_path)
         if os.path.isfile(file_path) and not os.path.isfile(f'{str(phy_folder)}/{filename}'):
@@ -92,12 +126,12 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
 if __name__ == "__main__":
 
     # Read command line arguments
-    user_input = Path(sys.argv[1])
-    dredge = sys.argv[2].lower() == 'true'
-    probe = sys.argv[3]
-    shank = sys.argv[4]
-    data_path = sys.argv[5]
-    chunk_n = sys.argv[6]
+    user_input = Path(sys.argv[1]) # Path to the data folder
+    dredge = sys.argv[2].lower() == 'true' # Whether to use DREDge or not
+    probe = sys.argv[3] # Probe number
+    shank = sys.argv[4] # Shank number
+    data_path = sys.argv[5] # Path to the data folder
+    chunk_n = sys.argv[6] # Chunk number
 
     try:
         chunk = int(chunk_n)
@@ -107,13 +141,14 @@ if __name__ == "__main__":
         chunk = 'total'
         output = 'output_total'
 
+    # Paths
     data_folder = user_input / data_path / output / f"probe_{probe}" / f"shank_{shank}.0"
+    # Loading recording with added path distinction for DREDge
     if dredge:
         data_folder = data_folder / 'dredge'
         recording_path = data_folder / chunk / 'recording' / 'traces_cached_seg0.raw'
     else:
         recording_path = data_folder  / 'recording'  / chunk / 'traces_cached_seg0.raw'
-        
     ks_path = data_folder / 'kilosort4' / chunk
     src_dir = ks_path / 'sorter_output'
 
@@ -121,6 +156,8 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
     device = "cuda" if use_cuda else "cpu"
     print(f"Device: {device}")
+
+    # Set Kilosort parameters
     kilosort_params = cfg.KILOSORT_PARAMS
     kilosort_params['torch_device'] = device
 
