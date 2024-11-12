@@ -40,7 +40,7 @@ FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_08_06_npx_lon
 Once everything is set up, you can run the spike sorting pipeline with:
 
 ```bash
-./run_pipeline.sh
+ephys-pipeline/run_pipeline.sh
 ```
 
 ### Issues
