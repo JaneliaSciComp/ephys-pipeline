@@ -35,9 +35,18 @@ Open the [`run_pipeline.sh`](https://github.com/joannercsheppard/ephys-pipeline/
 FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_08_06_npx_long_test/"
 ```
 
-### Setting Permissions
+### Running the Spike Sorting Pipeline
 
-Before running the scripts for the first time, ensure the necessary files are executable by setting the correct permissions using `chmod +x <filename>`:
+Once everything is set up, you can run the spike sorting pipeline with:
+
+```bash
+./run_pipeline.sh
+```
+
+### Issues
+### BEFORE FIRST RUN: Setting Permissions
+
+As the cluster is Linux-based, when first running the script you may need to change the file permissions using `chmod +x <filename>`. Changing the permissions will ensure the necessary files are executable:
 
 ```bash
 cd ephys-pipeline/pipeline/
@@ -47,12 +56,4 @@ cd scripts
 chmod +x run_pipeline.sh run_chunk_pipeline.sh
 cd ..
 cd ..
-```
-
-### Running the Spike Sorting Pipeline
-
-Once everything is set up, you can run the spike sorting pipeline with:
-
-```bash
-./run_pipeline.sh
 ```
