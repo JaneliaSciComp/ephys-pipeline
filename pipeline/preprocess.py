@@ -17,17 +17,13 @@ def get_artifacts(args):
     Returns:
     artifact_idx_filtered (np.array): array with artifact indices
     '''
-    # I just wanted to try and use args instead of unpacking it
-    # Seemed reasonable as user never interacts with this function
     recording, channels, start_idx, end_idx = args
-    # Get traces from the recording
     channel_data = recording.get_traces(start_frame=start_idx, end_frame=end_idx, channel_ids=channels)
-    filter_array = channel_data == 0 # Get all the zeros in the traces
-    artifact_indices = np.nonzero(filter_array)[0] + start_idx # Get the indices of the zeros
-    diffs = np.diff(artifact_indices) # Get the difference between the indices
-    non_sequential_indices = np.where(diffs != 1)[0] + 1 # Get the indices where the difference is not 1
-    non_sequential_indices = np.insert(non_sequential_indices, 0, 0) # Insert 0 at the beginning
-    # Bad code to avoid index error
+    filter_array = channel_data == 0
+    artifact_indices = np.nonzero(filter_array)[0] + start_idx
+    diffs = np.diff(artifact_indices)
+    non_sequential_indices = np.where(diffs != 1)[0] + 1
+    non_sequential_indices = np.insert(non_sequential_indices, 0, 0)
     try:
         artifact_idx_filtered = artifact_indices[non_sequential_indices]
     except IndexError:
@@ -52,6 +48,61 @@ def phase_shift(recording, n_channels):
     recording = spre.phase_shift(recording, inter_sample_shift=phase_shift_arr) # Phase shift the recording
     return recording
 
+def detect_artifacts(recording, num_cpus=None):
+    """Detect artifacts in recording by finding sequences of zero values
+    Args:
+        recording (se.RecordingExtractor): recording to detect artifacts in
+        num_cpus (int): number of CPUs to use for parallel processing
+    Returns:
+        artifact_indexes (np.array): array of artifact indices
+    """
+    # Process 30 minute chunks at a time
+    chunk_size = int(5 * 60 * recording.get_sampling_frequency())
+    print(chunk_size)
+    total_samples = recording.get_num_frames()
+    
+    channel_ids = recording.get_channel_ids()
+    # Sample channels evenly across the probe for artifact detection
+    step = len(channel_ids) // 10  # Get ~10 evenly spaced channels
+    channel_ids = channel_ids[::step][:10]  # Take first 10 channels after stepping
+
+    # Create list of chunk start/end indices
+    chunk_indices = [(start, min(start + chunk_size, total_samples)) 
+                    for start in range(0, total_samples, chunk_size)]
+
+    # Process chunks in parallel
+    args_list = [(recording, channel_ids, start_idx, end_idx) 
+                 for start_idx, end_idx in chunk_indices]
+    
+    with Pool(processes=num_cpus) as pool:
+        chunk_artifacts = list(tqdm(
+            pool.imap(get_artifacts, args_list),
+            total=len(chunk_indices),
+            desc="Processing chunks"
+        ))
+    
+    # Combine results
+    artifact_indices = []
+    for chunk_result in chunk_artifacts:
+        artifact_indices.extend(chunk_result)
+    
+    artifact_indices = np.array(artifact_indices)
+    print(f"Total artifacts found: {len(artifact_indices)}")
+    
+    # Get non-sequential indices
+    diffs = np.diff(artifact_indices)
+    non_sequential_indices = np.where(diffs != 1)[0] + 1
+    non_sequential_indices = np.insert(non_sequential_indices, 0, 0)
+    print("Non-sequential indices processed")
+    
+    # Get unique artifact indexes
+    try:
+        artifact_indexes = artifact_indices[non_sequential_indices]
+    except IndexError:
+        artifact_indexes = artifact_indices
+        
+    return artifact_indexes
+
 def process_traces(recording_path, p, n_channels, num_cpus=None):
     '''Process traces
     Args:
@@ -63,31 +114,15 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
     artifact_indexes (np.array): array with artifact indices
     '''
     # Load recording
-    recording = se.read_binary(recording_path, dtype='int32', sampling_frequency=cfg.SAMPLE_RATE, num_channels=n_channels)
+    try:
+        recording = se.read_binary(recording_path, dtype='int16', sampling_frequency=cfg.SAMPLE_RATE, num_channels=n_channels)
+    except:
+        recording = recording_path
     # User sanity check
     print(recording.get_total_duration())
-    # Get number of cpus from path or from system
-    num_cpus = num_cpus or os.cpu_count()
 
-    total_frames = recording.get_num_frames() # Get total number of frames
-    chunk_size = total_frames // num_cpus # Get size of data to be processed by each cpu core
-
-    chunks = [] # List to store chunks of data
-
-    step = 10 # Number of channels to process at a time
-    # Loop through the all channels in steps of 10 and create inputs for the get_artifacts function
-    for channel_start in range(0, n_channels, step):
-        channel_end = min(channel_start + step, n_channels)
-        for i in range(num_cpus):
-            start_idx = i * chunk_size
-            end_idx = (i + 1) * chunk_size if (i + 1) * chunk_size < total_frames else total_frames
-            chunks.append((recording, list(range(channel_start, channel_end)), start_idx, end_idx))
-
-    # Process traces in parallel
-    with Pool(num_cpus) as pool:
-        artifact_results = list(tqdm(pool.imap(get_artifacts, chunks), total=len(chunks), desc="Detecting Artifacts"))
-    # Get unique artifact indexes
-    artifact_indexes = np.unique(np.concatenate(artifact_results))
+    # Detect artifacts
+    artifact_indexes = detect_artifacts(recording, num_cpus)
 
     # Spike interface functions to process traces
     # Remove artifacts
@@ -96,9 +131,9 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
     # Phase shift the recording as Neuropixels probes have a phase shift
     recording = phase_shift(recording, n_channels)
     # Bandpass filter the recording
-    recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='float32')
+    recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='int16')
     # Set the probe geometry to do median removal
-    recording = recording.set_probe(p)
+    #recording = recording.set_probe(p)
     recording = spre.common_reference(recording, reference='local', operator='median')
     
     return recording, artifact_indexes

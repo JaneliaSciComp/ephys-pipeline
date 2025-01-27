@@ -8,7 +8,7 @@ import spikeinterface.extractors as se
 import spikeinterface.full as si
 from pathlib import Path
 
-def collect_files(data_folder, probe_names):
+def collect_files(data_folder, probe_names, output_folder=True):
     '''Collect all files for each probe within data_folder
     Args:
     data_folder (Path): path to the data folder
@@ -23,8 +23,9 @@ def collect_files(data_folder, probe_names):
     for probe_x in probe_names:
         # Collect all files for probe_x within data_folder
         recording_files[probe_x] = glob.glob(f"{str(data_folder)}/{probe_x}_*")
-        # Create a folder for each probe (should probs be done in main)
-        os.makedirs(f'{str(output_folder)}/{probe_x}' , exist_ok=True)
+        # Create a folder for each probe (should probl be done in main)
+        if output_folder:
+            os.makedirs(f'{str(output_folder)}/{probe_x}' , exist_ok=True)
         # Print the number of files found for each probe for user feedback
         print(f'Found {len(recording_files[probe_x])} files for {probe_x}')
 
@@ -48,7 +49,7 @@ def split_recording(recording_files, probe_names, global_probe_data):
         # Loop through each recording file for probe_x
         for recording_file in recording_files[probe_x]:
             # Load the recording file
-            recording = se.read_binary(recording_file, dtype='int32', sampling_frequency=cfg.SAMPLE_RATE, num_channels=cfg.N_CHANNELS_PROBE)
+            recording = se.read_binary(recording_file, dtype='int16', sampling_frequency=cfg.SAMPLE_RATE, num_channels=cfg.N_CHANNELS_PROBE)
             # Sanity check for user
             print(recording.get_total_duration())
             # Append the recording to the list and ignore any empty
