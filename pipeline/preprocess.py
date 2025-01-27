@@ -107,7 +107,7 @@ def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
     '''Process traces
     Args:
     recording_path (str): path to the recording file
-    p (pi.Probe): probe object
+    p (tuple): tuple containing (probe object, probe data)
     num_cpus (int): number of cpus to use
     Returns:
     recording (se.RecordingExtractor): processed recording
@@ -133,7 +133,7 @@ def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
     # Bandpass filter the recording
     recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='int16')
     # Set the probe geometry to do median removal
-    recording = recording.set_probe(p)
+    recording = recording.set_probe(p[0])  # Use only the probe object from the tuple
     recording = spre.common_reference(recording, reference='local', operator='median')
     
     return recording, artifact_indexes
@@ -165,7 +165,7 @@ if __name__ == "__main__":
     shank_probe, shank_probe_data = ut.load_probe_from_json(cfg.SHANK_FILE) # Load the shank probe
 
     # Process traces and artifacts
-    recording, artifact_indexes = process_traces(recording_path, shank_probe, cfg.N_CHANNELS_SHANK)
+    recording, artifact_indexes = process_traces(recording_path, (shank_probe, shank_probe_data), cfg.N_CHANNELS_SHANK)
 
     # Save processed recording
     artifact_path = shank_folder / "recording" / chunk
