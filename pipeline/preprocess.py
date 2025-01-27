@@ -133,7 +133,7 @@ def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
     # Bandpass filter the recording
     recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='int16')
     # Set the probe geometry to do median removal
-    #recording = recording.set_probe(p)
+    recording = recording.set_probe(p)
     recording = spre.common_reference(recording, reference='local', operator='median')
     
     return recording, artifact_indexes
