@@ -48,7 +48,7 @@ def phase_shift(recording, n_channels):
     recording = spre.phase_shift(recording, inter_sample_shift=phase_shift_arr) # Phase shift the recording
     return recording
 
-def detect_artifacts(recording, num_cpus=None):
+def detect_artifacts(recording, num_cpus=None, chunk_size=5):
     """Detect artifacts in recording by finding sequences of zero values
     Args:
         recording (se.RecordingExtractor): recording to detect artifacts in
@@ -57,7 +57,7 @@ def detect_artifacts(recording, num_cpus=None):
         artifact_indexes (np.array): array of artifact indices
     """
     # Process 30 minute chunks at a time
-    chunk_size = int(5 * 60 * recording.get_sampling_frequency())
+    chunk_size = int(chunk_size * 60 * recording.get_sampling_frequency())
     print(chunk_size)
     total_samples = recording.get_num_frames()
     
@@ -103,7 +103,7 @@ def detect_artifacts(recording, num_cpus=None):
         
     return artifact_indexes
 
-def process_traces(recording_path, p, n_channels, num_cpus=None):
+def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
     '''Process traces
     Args:
     recording_path (str): path to the recording file
@@ -122,7 +122,7 @@ def process_traces(recording_path, p, n_channels, num_cpus=None):
     print(recording.get_total_duration())
 
     # Detect artifacts
-    artifact_indexes = detect_artifacts(recording, num_cpus)
+    artifact_indexes = detect_artifacts(recording, num_cpus, chunk_size)
 
     # Spike interface functions to process traces
     # Remove artifacts
