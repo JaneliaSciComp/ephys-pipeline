@@ -103,7 +103,7 @@ def detect_artifacts(recording, num_cpus=None, chunk_size=5):
         
     return artifact_indexes
 
-def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
+def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5, artifacts=True):
     '''Process traces
     Args:
     recording_path (str): path to the recording file
@@ -121,13 +121,18 @@ def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5):
     # User sanity check
     print(recording.get_total_duration())
 
-    # Detect artifacts
-    artifact_indexes = detect_artifacts(recording, num_cpus, chunk_size)
+    if artifacts:
+        # Detect artifacts
+        artifact_indexes = detect_artifacts(recording, num_cpus, chunk_size)
 
-    # Spike interface functions to process traces
-    # Remove artifacts
-    recording = spre.remove_artifacts(recording, list_triggers=artifact_indexes,
-                                      ms_before=250, ms_after=250, mode='linear')
+        # Spike interface functions to process traces
+        # Remove artifacts
+        recording = spre.remove_artifacts(recording, list_triggers=artifact_indexes,
+                                        ms_before=250, ms_after=250, mode='linear')
+        
+    else:
+        artifact_indexes = None
+        
     # Phase shift the recording as Neuropixels probes have a phase shift
     recording = phase_shift(recording, n_channels)
     # Bandpass filter the recording

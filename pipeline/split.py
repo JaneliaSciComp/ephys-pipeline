@@ -19,10 +19,14 @@ def collect_files(data_folder, probe_names, output_folder=True):
     # Set up dictionary to store files
     recording_files = {}
 
+    # Convert probe_names to list if it's a string
+    if isinstance(probe_names, str):
+        probe_names = [probe_names]
+
     # Loop through each probe and collect all files
     for probe_x in probe_names:
         # Collect all files for probe_x within data_folder
-        recording_files[probe_x] = glob.glob(f"{str(data_folder)}/{probe_x}_*")
+        recording_files[probe_x] = glob.glob(f"{str(data_folder)}/{probe_x}*")
         # Create a folder for each probe (should probl be done in main)
         if output_folder:
             os.makedirs(f'{str(output_folder)}/{probe_x}' , exist_ok=True)
@@ -43,9 +47,14 @@ def split_recording(recording_files, probe_names, global_probe_data):
     # Set up dictionary to store shank data
     shank_dict = {}
     # Loop through each probe and split into shanks
+
+    if isinstance(probe_names, str):
+        probe_names = [probe_names]
+        
     for probe_x in probe_names:
         # Set up list to store recordings
         recordings = []
+        recording_paths = []
         # Loop through each recording file for probe_x
         for recording_file in recording_files[probe_x]:
             # Load the recording file
@@ -57,6 +66,7 @@ def split_recording(recording_files, probe_names, global_probe_data):
                 print(f"Warning: The recording file {recording_file} is empty.")
             else:
                 recordings.append(recording)
+                recording_paths.append(recording_file)
         # Concatenate the recordings
         total_recording = si.concatenate_recordings(recordings)
         # Set the group property to the shank index
@@ -65,7 +75,7 @@ def split_recording(recording_files, probe_names, global_probe_data):
         shank_dict[probe_x] = total_recording.split_by("group")
         # Print the number of shanks for user feedback
         print(f"Split {probe_x} into {len(shank_dict[probe_x])} shanks")
-    return shank_dict
+    return shank_dict, recording_paths
 
 def save_shanks(shank_dict, probe_names, output_folder, job_kwargs, chunk=True):
     '''Save the shank recordings

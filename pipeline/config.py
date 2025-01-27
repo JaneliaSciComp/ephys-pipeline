@@ -8,7 +8,7 @@ SAMPLE_RATE = 30000
 DREDGE_STEP = 15
 DREDGE_SCALE = 50
 KILOSORT_PARAMS = {
-    'do_correction': False,
+    'do_correction': True,
     'skip_kilosort_preprocessing': False,
     'batch_size': 30000,
 }

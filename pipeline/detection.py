@@ -28,7 +28,7 @@ def process_traces(recording_path, probe):
     return recording
 
 
-def replace_params(file, output_path, n_channels, chunk_n):
+def replace_params(src_dir, output_path, n_channels):
     '''
     Replace the params.py file for Phy in the output folder with the correct number of channels and offset
     Input:
@@ -37,17 +37,13 @@ def replace_params(file, output_path, n_channels, chunk_n):
         n_channels: Number of channels
         chunk_n: Chunk number
     '''
-    try:
-        offset = int(chunk_n) * cfg.CHUNK_SIZE * cfg.SAMPLE_RATE
-    except ValueError:
-        offset = 0
     params_content = (
         f"n_channels_dat = {int(n_channels)}\n"
         f"offset = 0\n"
         "sample_rate = 30000\n"
         "dtype = 'float32'\n"
         "hp_filtered = False\n"
-        f"dat_path = '{file}'"
+        f"dat_path = {src_dir}"
     )
     output_file = f"{output_path}/params.py"
     
@@ -55,7 +51,7 @@ def replace_params(file, output_path, n_channels, chunk_n):
         f.write(params_content)
 
 
-def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n= None):
+def run_kilosort(recording, ks_path, src_dirs, kilosort_params, chunk_n= None):
     '''
     Run Kilosort on the recording
     Input:
@@ -96,6 +92,8 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n= None):
     _ = we.compute('correlograms')
     _ = we.compute('spike_amplitudes', n_jobs=12)
 
+    replace_params(src_dirs, ks_path, n_channels=cfg.N_CHANNELS_PROBE)
+
     # Phy path
     phy_folder = ks_path / 'phy'
 
@@ -110,17 +108,17 @@ def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n= None):
                     n_jobs=12)
     
     # Replace params.py file in Phy folders - also needed in KS folder
-    replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
-    replace_params(recording_path, phy_folder, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
+    #replace_params(recording_path, ks_path, n_channels=cfg.N_CHANNELS_SHANK, chunk_n=chunk_n)
+    replace_params(src_dirs, phy_folder, n_channels=cfg.N_CHANNELS_PROBE)
 
     # Copying files created by Kilosort to Phy folder
-    for file_path in glob.glob(os.path.join(src_dir, '*')):
-        filename = os.path.basename(file_path)
-        if os.path.isfile(file_path) and not os.path.isfile(f'{str(phy_folder)}/{filename}'):
-            copyfile(file_path, f'{str(phy_folder)}/{filename}')
+    #for file_path in glob.glob(os.path.join(src_dir, '*')):
+        #filename = os.path.basename(file_path)
+        #if os.path.isfile(file_path) and not os.path.isfile(f'{str(phy_folder)}/{filename}'):
+            #copyfile(file_path, f'{str(phy_folder)}/{filename}')
 
-    print(f"Kilosort output: {ks_path}/sorter_output/")
-    print(f"Phy output: {phy_folder}")
+    #print(f"Kilosort output: {ks_path}/sorter_output/")
+    #print(f"Phy output: {phy_folder}")
 
 
 if __name__ == "__main__":
