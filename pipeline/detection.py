@@ -55,7 +55,7 @@ def replace_params(file, output_path, n_channels, chunk_n):
         f.write(params_content)
 
 
-def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n):
+def run_kilosort(recording, ks_path, src_dir, kilosort_params, chunk_n= None):
     '''
     Run Kilosort on the recording
     Input:
