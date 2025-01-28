@@ -73,6 +73,7 @@ def run_kilosort(recording, ks_path, src_dirs, kilosort_params, chunk_n= None):
         docker_image=None,
         singularity_image=None,
         with_output=True,
+        n_jobs=12, 
         remove_existing_folder=True,
         **kilosort_params
     )
