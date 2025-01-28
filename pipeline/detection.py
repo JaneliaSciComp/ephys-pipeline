@@ -12,6 +12,14 @@ import os
 import glob
 from kilosort import run_kilosort
 
+import spikeinterface.full as si
+si.set_global_job_kwargs(
+    n_jobs=12,  # number of parallel jobs
+    max_threads_per_process=2,  # threads per process
+    progress_bar=True  # show progress
+    )
+
+
 
 job_kwargs = cfg.JOB_KWARGS
 
@@ -73,7 +81,6 @@ def run_kilosort(recording, ks_path, src_dirs, kilosort_params, chunk_n= None):
         docker_image=None,
         singularity_image=None,
         with_output=True,
-        n_jobs=12, 
         remove_existing_folder=True,
         **kilosort_params
     )

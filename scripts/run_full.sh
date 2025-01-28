@@ -2,7 +2,7 @@
 
 # Define paths
 CONDA_ENV="spikenv"
-FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_08_06_npx_long_test/data/"
+FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_07_31_npx_test_01/"
 CODEPATH="$HOME/ephys-pipeline/pipeline"
 LOG_DIR="$HOME/ephys-pipeline/logs/$(basename "$FILEPATH")2"
 LOG_DIR="$HOME/ephys-pipeline/logs/$(basename "$(dirname "$FILEPATH")")"
@@ -15,7 +15,7 @@ mkdir -p "$LOG_DIR"
 source ~/.bashrc && conda activate $CONDA_ENV
 
 # Iterate over probes and shanks, then dynamically process chunks
-for shank in 1; do
+for shank in 2; do
     echo "Running detection for probe $PROBE shank $shank" >> "$LOG_DIR/pipeline.log" 2>&1
 
     KS_JOB_ID=$(bsub -n 12 -gpu "num=1" -q "gpu_tesla" \

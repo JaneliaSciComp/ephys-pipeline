@@ -6,8 +6,14 @@ from pathlib import Path
 import utils as ut
 import numpy as np
 import sys
+import spikeinterface.full as si
 
 if __name__ == "__main__":
+    si.set_global_job_kwargs(
+        n_jobs=12,  # number of parallel jobs
+        max_threads_per_process=2,  # threads per process
+        progress_bar=True  # show progress
+        )
 
     num = float(sys.argv[1])
     probe_name = str(sys.argv[2])
