@@ -103,7 +103,7 @@ def detect_artifacts(recording, num_cpus=None, chunk_size=5):
         
     return artifact_indexes
 
-def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5, artifacts=True):
+def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5, artifacts=True, art_path=None):
     '''Process traces
     Args:
     recording_path (str): path to the recording file
@@ -122,23 +122,33 @@ def process_traces(recording_path, p, n_channels, num_cpus=None, chunk_size=5, a
     print(recording.get_total_duration())
 
     if artifacts:
+        print("Processing artifacts...")
         # Detect artifacts
-        artifact_indexes = detect_artifacts(recording, num_cpus, chunk_size)
+        if art_path == None:
+            artifact_indexes = detect_artifacts(recording, num_cpus, chunk_size)
+        else:
+            print("Loading artifact file")
+            art_file = art_path / 'artifact_indexes.npy'
+            artifact_indexes = np.load(art_file)
 
         # Spike interface functions to process traces
         # Remove artifacts
+        print("Removing artifacts...")
         recording = spre.remove_artifacts(recording, list_triggers=artifact_indexes,
                                         ms_before=250, ms_after=250, mode='linear')
         
     else:
         artifact_indexes = None
         
+    print("Processing phase shift...")
     # Phase shift the recording as Neuropixels probes have a phase shift
     recording = phase_shift(recording, n_channels)
     # Bandpass filter the recording
+    print("Bandpass filtering...")
     recording = spre.bandpass_filter(recording, freq_min=300., freq_max=7500., dtype='int16')
     # Set the probe geometry to do median removal
     recording = recording.set_probe(p[0])  # Use only the probe object from the tuple
+    print("Median removal...")
     recording = spre.common_reference(recording, reference='local', operator='median')
     
     return recording, artifact_indexes

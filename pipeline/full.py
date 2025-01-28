@@ -5,6 +5,7 @@ import config as cfg
 from pathlib import Path
 import utils as ut
 import numpy as np
+import sys
 
 if __name__ == "__main__":
 
@@ -12,7 +13,7 @@ if __name__ == "__main__":
     probe_name = str(sys.argv[2])
     data_folder = Path(sys.argv[3])
 
-    output_folder = data_folder / 'output'# Create output folder if it doesn't exist
+    output_folder = data_folder / 'output' # Create output folder if it doesn't exist
     output_folder.mkdir(exist_ok=True)
 
 
@@ -21,15 +22,25 @@ if __name__ == "__main__":
     shank_dict, recording_paths = sp.split_recording(recording_files, probe_name, global_probe_data)
 
     shank = shank_dict[probe_name][num]
+    del shank_dict  # Explicitly delete shank_dict to free memory
+
     shank_folder = output_folder / probe_name / f"shank_{str(num)}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
-    shank_probe = ut.load_probe_from_json(cfg.SHANK_FILE)
-    recording, artifact_indexes = pp.process_traces(shank, shank_probe, n_channels=cfg.N_CHANNELS_SHANK, num_cpus=16, artifacts=True)
+    
 
+    shank_probe = ut.load_probe_from_json(cfg.SHANK_FILE)
     artifact_path = shank_folder / "artifacts"
+    if artifact_path.exists():
+        recording, artifact_indexes = pp.process_traces(shank, shank_probe, n_channels=cfg.N_CHANNELS_SHANK, num_cpus=12, artifacts=True, art_path = artifact_path)
+    else:
+        recording, artifact_indexes = pp.process_traces(shank, shank_probe, n_channels=cfg.N_CHANNELS_SHANK, num_cpus=12, artifacts=True)
+
+    #artifact_path = shank_folder / "artifacts"
     artifact_path.mkdir(parents=True, exist_ok=True)
     np.save(artifact_path / "artifact_indexes.npy", artifact_indexes)
+
+    print("running ks...")
 
     kilosort_params = cfg.KILOSORT_PARAMS
     kilosort_params['torch_device'] = 'cuda'
@@ -37,4 +48,6 @@ if __name__ == "__main__":
 
     ks_path = shank_folder / "kilosort"
     src_dir = recording_paths
+
+    print("starting...")
     dt.run_kilosort(recording, ks_path, src_dir, kilosort_params)

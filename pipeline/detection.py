@@ -10,6 +10,7 @@ import torch
 from shutil import copyfile
 import os
 import glob
+from kilosort import run_kilosort
 
 
 job_kwargs = cfg.JOB_KWARGS
@@ -41,7 +42,7 @@ def replace_params(src_dir, output_path, n_channels):
         f"n_channels_dat = {int(n_channels)}\n"
         f"offset = 0\n"
         "sample_rate = 30000\n"
-        "dtype = 'float32'\n"
+        "dtype = 'int16'\n"
         "hp_filtered = False\n"
         f"dat_path = {src_dir}"
     )
