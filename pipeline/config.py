@@ -10,7 +10,7 @@ DREDGE_SCALE = 50
 KILOSORT_PARAMS = {
     'do_correction': True,
     'skip_kilosort_preprocessing': False,
-    'batch_size': 30000,
+    'batch_size': 60000,
 }
 ANALYSIS_TSTEP = 10
 CHUNK_SIZE = 60 * 60 # in seconds

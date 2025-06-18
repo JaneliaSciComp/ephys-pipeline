@@ -93,7 +93,7 @@ def run_kilosort(recording, ks_path, src_dirs, kilosort_params, chunk_n= None):
 
     # Create sorting analyzer to recompute some metrics
     print('Sorting Analyzer')
-    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=12)
+    we = si.create_sorting_analyzer(recording=recording, sorting=phy_sorting, folder=ks_path, overwrite=True, n_jobs=12, gpu=True)
 
     # Compute metrics
     print('Compute')

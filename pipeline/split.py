@@ -25,6 +25,7 @@ def collect_files(data_folder, probe_names, output_folder=True):
 
     # Loop through each probe and collect all files
     for probe_x in probe_names:
+        print(probe_x)
         # Collect all files for probe_x within data_folder
         recording_files[probe_x] = glob.glob(f"{str(data_folder)}/{probe_x}*")
         # Create a folder for each probe (should probl be done in main)
@@ -70,7 +71,8 @@ def split_recording(recording_files, probe_names, global_probe_data):
         # Concatenate the recordings
         total_recording = si.concatenate_recordings(recordings)
         # Set the group property to the shank index
-        total_recording.set_property("group", global_probe_data['shankInd'])
+        #print(global_probe_data[probe_x].get_shanks()[2])
+        total_recording.set_property("group", global_probe_data[probe_x]['shankInd'])
         # Split the recording by group
         shank_dict[probe_x] = total_recording.split_by("group")
         # Print the number of shanks for user feedback
