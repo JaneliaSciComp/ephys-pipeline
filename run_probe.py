@@ -119,6 +119,9 @@ if __name__ == "__main__":
 
     output_folder = f'{folder}/output/{probe_name}'
 
+    #first_hour_samples = 30000 * 60 * 10
+    #total_recording = total_recording.frame_slice(start_frame=0, end_frame=first_hour_samples)
+
     print("Saving binary file...")
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
         total_recording, output_folder, data_name=f'{probe_name}.bin', dtype=dtype,
