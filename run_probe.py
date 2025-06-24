@@ -62,8 +62,8 @@ def load_probe(probe_file):
 def combine_recording(recording_files, global_probe_data):
 
     total_channels = 384
-    num_channels_per_adc = 12
-    num_channels_in_adc = 12 # or 13 if you have ap stream
+    num_channels_per_adc = 16
+    num_channels_in_adc = 16 
 
     sample_shifts = get_neuropixels_sample_shifts(total_channels, num_channels_per_adc, num_channels_in_adc)
 
@@ -144,6 +144,13 @@ if __name__ == "__main__":
         est_contam_rate, kept_spikes = run_kilosort(
             settings=settings, probe=kilosort_probe, filename=filename
             )
+
+'''
+bsub -n 12 -gpu "num=1" -q gpu_h200 -o "output.log" -N \
+bash -c "source ~/.bashrc && conda activate spikenv && python -u run_probe.py '/groups/voigts/voigtslab/neuropixels_2025/npx06/2025_06_12_npx06_day4/' 'a'" 
+'''
+
+
 
 
 
