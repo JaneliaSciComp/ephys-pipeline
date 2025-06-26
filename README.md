@@ -119,18 +119,6 @@ The main processing script performs:
 4. **Kilosort Execution**: Runs spike detection and clustering
 5. **Output Generation**: Saves sorted spike data and quality metrics
 
-### Analysis Tools
-
-#### Exploration Notebooks (`explore/`)
-- `ksoutput.ipynb`: Analyze Kilosort output and spike quality
-- `motion_corr.ipynb`: Motion correction analysis and visualization
-
-#### Analysis Notebooks (`analysis/`)
-- `place.ipynb`: Place cell analysis and spatial coding
-
-#### Main Exploration (`explore.ipynb`)
-- Comprehensive data exploration and visualization
-
 ## Output Structure
 
 After processing, the output folder contains:
