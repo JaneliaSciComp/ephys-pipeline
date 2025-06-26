@@ -71,7 +71,7 @@ animal_folder/
 To process a single recording for one probe:
 
 ```bash
-bsub -n 12 -gpu "num=1" -q gpu_h200 -o "output.log" -N \
+bsub -n 12 -gpu "num=1" -q gpu_l4 -o "output.log" -N \
 bash -c "source ~/.bashrc && conda activate spikenv && python -u run_probe.py '/path/to/recording/folder/' 'probe_letter'"
 ```
 
@@ -81,7 +81,7 @@ bash -c "source ~/.bashrc && conda activate spikenv && python -u run_probe.py '/
 
 **Example:**
 ```bash
-bsub -n 12 -gpu "num=1" -q gpu_h200 -o "output.log" -N \
+bsub -n 12 -gpu "num=1" -q gpu_l4 -o "output.log" -N \
 bash -c "source ~/.bashrc && conda activate spikenv && python -u run_probe.py '/groups/voigts/voigtslab/neuropixels_2025/npx06/2025_06_12_npx06_day4/' 'a'"
 ```
 
@@ -145,52 +145,3 @@ output/
     ├── spike_clusters.npy    # Cluster assignments
     └── cluster_info.csv      # Cluster quality metrics
 ```
-
-## Configuration
-
-### Cluster Settings
-
-The pipeline is configured for Janelia's computing cluster:
-
-- **GPU Queue**: `gpu_h200` (single recording) or `gpu_l4` (batch processing)
-- **CPU Cores**: 8-12 cores per job
-- **Memory**: Automatically allocated based on queue settings
-
-### Probe Configuration
-
-Probe configurations are stored in JSON files with:
-- Channel positions and IDs
-- Shank information
-- Active channel mapping
-- Device-specific parameters
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Empty Recording Files**: The pipeline will skip empty files and continue processing
-2. **Memory Issues**: Reduce the number of CPU cores if encountering memory errors
-3. **GPU Queue**: Ensure you have access to the specified GPU queues
-
-### Log Files
-
-- Single recording: Check `output.log` for processing details
-- Batch processing: Check `output_YYYY_MM_DD_probe.log` files
-
-## Contributing
-
-To contribute to this pipeline:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with sample data
-5. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Contact
-
-For questions or issues, please contact the development team or create an issue in the repository.
