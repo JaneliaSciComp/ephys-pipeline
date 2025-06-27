@@ -17,7 +17,7 @@ if [ ! -d "$day_dir" ]; then
 fi
 
 for probe in a b; do
-    for shank_num in 1 2 3 4; do
+    for shank_num in 0 1 2 3; do
         dir_name=$(basename "$day_dir")
         output_file="output_${dir_name}_${probe}_shank${shank_num}.log"
 
