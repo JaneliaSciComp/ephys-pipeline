@@ -117,7 +117,6 @@ if __name__ == "__main__":
     data_folder = folder / "data"
     output_folder = folder / "output"
     probe_name = f"np2-{probe}-amp"
-    shank_num = 1
 
     probe_file = folder / f"{probe}_probe_conf.json"
     probe_data = load_probe(probe_file)
