@@ -25,7 +25,7 @@ for probe in a b; do
         
         bsub -n 8 -gpu "num=1" -q gpu_l4 \
                 -o "$output_file" -N -u sheppardj@janelia.hhmi.org \
-                bash -c "source ~/.bashrc && conda activate spikenv && python -u run_probe.py '${day_dir}' '${probe}' '${shank_num}'"
+                bash -c "source ~/.bashrc && conda activate spikenv && python -u run_shank.py '${day_dir}' '${probe}' '${shank_num}'"
         
         if [ $? -eq 0 ]; then
             echo "Job submitted successfully for probe ${probe}, shank ${shank_num}"
