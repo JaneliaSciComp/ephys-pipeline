@@ -103,7 +103,11 @@ def split_recording(recording_files, probe_names, global_probe_data):
             recording_paths.append(recording_file)
     # Concatenate the recordings
     total_recording = si.concatenate_recordings(recordings)
+    total_recording.set_probe(global_probe_data)
+    total_recording.set_channel_locations(global_probe_data.contact_positions)
     # Set the group property to the shank index
+    total_recording = spre.bandpass_filter(total_recording, freq_min=300., freq_max=7500., dtype='int16')
+    total_recording = spre.common_reference(total_recording, reference='local', operator='median')
     total_recording.set_property("group", global_probe_data.shank_ids)
     # Split the recording by group
     total_recording = total_recording.split_by("group")
