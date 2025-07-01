@@ -153,7 +153,7 @@ if __name__ == "__main__":
     # This command will both run the spike-sorting analysis and save the results to
     # `DATA_DIRECTORY`.
 
-    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000 * 8}
+    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000 * 8, 'Th': [10, 6]}
 
     ops, st, clu, tF, Wall, similar_templates, is_ref, \
         est_contam_rate, kept_spikes = run_kilosort(
