@@ -19,11 +19,11 @@ fi
 for probe in a b; do
     for shank_num in 0 1 2 3; do
         dir_name=$(basename "$day_dir")
-        output_file="output_${dir_name}_${probe}_shank${shank_num}.log"
+        output_file="output/output_${dir_name}_${probe}_shank${shank_num}.log"
 
         echo "Submitting job for ${day_dir}, probe ${probe}, shank ${shank_num}"
         
-        bsub -n 8 -gpu "num=1" -q gpu_l4 \
+        bsub -n 12 -gpu "num=1" -q gpu_a100 \
                 -o "$output_file" -N -u sheppardj@janelia.hhmi.org \
                 bash -c "source ~/.bashrc && conda activate spikenv && python -u run_shank.py '${day_dir}' '${probe}' '${shank_num}'"
         
