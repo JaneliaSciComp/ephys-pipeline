@@ -43,7 +43,7 @@ def load_probe(probe_file, shank_num=None):
         #shank_channels_mask = shank_channels_mask[active_channels_mask]
         for key in ['contact_positions', 'contact_plane_axes', 'contact_shapes', 'contact_shape_params', 'device_channel_indices', 'contact_ids', 'shank_ids']:
             probe[key] = probe[key][shank_channels_mask]
-        probe['device_channel_indices'] = np.arange(0, 96 * 2)
+        probe['device_channel_indices'] = np.arange(0, N_CHANNELS_SHANK)
 
     probe = pi.Probe.from_dict(probe)
     return probe
