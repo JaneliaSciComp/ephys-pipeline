@@ -15,7 +15,7 @@ from kilosort import run_kilosort
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
-N_CHANNELS_SHANK = 96
+N_CHANNELS_SHANK = 96 * 2 
 
 def find_active_channels(probe_dict):
     dev_ind = np.array(probe_dict['probes'][0]["device_channel_indices"])
@@ -43,7 +43,7 @@ def load_probe(probe_file, shank_num=None):
         #shank_channels_mask = shank_channels_mask[active_channels_mask]
         for key in ['contact_positions', 'contact_plane_axes', 'contact_shapes', 'contact_shape_params', 'device_channel_indices', 'contact_ids', 'shank_ids']:
             probe[key] = probe[key][shank_channels_mask]
-        probe['device_channel_indices'] = np.arange(0, 96)
+        probe['device_channel_indices'] = np.arange(0, 96 * 2)
 
     probe = pi.Probe.from_dict(probe)
     return probe
@@ -120,7 +120,7 @@ if __name__ == "__main__":
 
     data_folder = folder / "data"
     output_folder = folder / "output"
-    probe_name = f"np2-{probe}-amp"
+    probe_name = f"np2-{probe}-ephys"
 
     probe_file = folder / f"{probe}_probe_conf.json"
     probe_data = load_probe(probe_file)
@@ -153,7 +153,7 @@ if __name__ == "__main__":
     # This command will both run the spike-sorting analysis and save the results to
     # `DATA_DIRECTORY`.
 
-    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000 * 8, 'Th': [10, 6]}
+    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000 * 8}
 
     ops, st, clu, tF, Wall, similar_templates, is_ref, \
         est_contam_rate, kept_spikes = run_kilosort(
