@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# we should give param for email/user or figure it out from login user/path info
-
 # Check if an argument was provided
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <day_directory>"
@@ -18,6 +16,10 @@ if [ ! -d "$day_dir" ]; then
     exit 1
 fi
 
+# user will get emailed here
+user="${USER:-$(whoami)}"
+email="${user}@janelia.hhmi.org"
+
 for probe in a b; do
     for shank_num in 0 1 2 3; do
         dir_name=$(basename "$day_dir")
@@ -26,7 +28,7 @@ for probe in a b; do
         echo "Submitting job for ${day_dir}, probe ${probe}, shank ${shank_num}"
         
         bsub -n 12 -gpu "num=1" -q gpu_a100 \
-                -o "$output_file" -N -u comriea@janelia.hhmi.org \
+                -o "$output_file" -N -u "$email" \
                 bash -c "source ~/.bashrc && conda activate spikenv411 && python -u run_shank.py '${day_dir}' '${probe}' '${shank_num}'"
         
         if [ $? -eq 0 ]; then
@@ -38,3 +40,4 @@ for probe in a b; do
 done
 
 echo "All jobs submitted!"
+echo "Will email ${email} upon job completion/error."
