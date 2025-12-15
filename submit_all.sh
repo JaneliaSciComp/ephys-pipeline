@@ -15,7 +15,7 @@ if [ ! -d "$day_dir" ]; then
     echo "Directory does not exist: $day_dir"
     exit 1
 fi
-
+echo "hey"
 # user will get emailed here
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"
