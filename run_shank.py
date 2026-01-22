@@ -13,8 +13,9 @@ import probeinterface as pi
 from kilosort import io
 from kilosort import run_kilosort
 import time
+from get_artifacts import detect_saturation_periods
 
-SAMPLE_RATE = 25000
+SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
 global N_CHANNELS_SHANK
 N_CHANNELS_SHANK = 96 #192
@@ -92,6 +93,7 @@ def split_recording(recording_files, probe_names, global_probe_data):
     for recording_file in recording_files:
         # Load the recording file
         recording = se.read_binary(recording_file, dtype='int16', sampling_frequency=SAMPLE_RATE, num_channels=N_CHANNELS_PROBE)
+
         # Sanity check for user
         print(recording.get_total_duration())
         # Append the recording to the list and ignore any empty
@@ -99,8 +101,23 @@ def split_recording(recording_files, probe_names, global_probe_data):
             print(f"Warning: The recording file {recording_file} is empty.")
         else:
             recording.set_probe(global_probe_data)
+            recording.set_channel_locations(global_probe_data.contact_positions)
+            recording = si.highpass_filter(recording, ftype='bessel', dtype='float32')
             sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
             recording = spre.phase_shift(recording, inter_sample_shift=sample_shifts)
+            recording = si.common_reference(recording, reference='local')
+            saturation_idx = detect_saturation_periods(
+                            recording,
+                            abs_threshold=3900,
+                            direction="upper",
+                            chunk_size=30000 * 10,
+                            n_jobs=12
+                        )
+            recording = si.remove_artifacts(recording,
+                            list_triggers=saturation_idx,
+                            ms_before=10,
+                            ms_after=10,
+                            mode="zeros")
             recordings.append(recording)
             recording_paths.append(recording_file)
     # Concatenate the recordings
@@ -108,10 +125,17 @@ def split_recording(recording_files, probe_names, global_probe_data):
     total_recording.set_probe(global_probe_data)
     total_recording.set_channel_locations(global_probe_data.contact_positions)
     # Set the group property to the shank index
-    total_recording = spre.bandpass_filter(total_recording, freq_min=300., freq_max=7500., dtype='int16')
-    total_recording = spre.common_reference(total_recording, reference='local', operator='median')
     total_recording.set_property("group", global_probe_data.shank_ids)
     # Split the recording by group
+    rec_split = total_recording.split_by("group")
+
+    rec_destripe = []
+    for sh in range(len(rec_split)):
+        rec_destripe.append(si.highpass_spatial_filter(rec_split[str(sh)]))
+
+    total_recording = si.aggregate_channels(rec_destripe, renamed_channel_ids=total_recording.get_channel_ids())
+
+    total_recording = spre.bandpass_filter(total_recording, freq_min=300., freq_max=7500., dtype='int16')
     total_recording = total_recording.split_by("group")
     return total_recording, recording_paths
 
@@ -149,6 +173,29 @@ if __name__ == "__main__":
     shank_probe = load_probe(probe_file, shank_num)
     total_recording[str(shank_num)] = total_recording[str(shank_num)].set_probe(shank_probe)
 
+    total_recording[str(shank_num)].set_channel_gains(1)
+    total_recording[str(shank_num)].set_channel_offsets(0)
+
+    print('Detecting and interpolating over bad channels.. ')
+
+    # Detect dead channels
+    bad_channel_ids, all_channels = si.detect_bad_channels(total_recording[str(shank_num)] , method='coherence+psd', seed=42)
+    prec_dead_ch = np.sum(all_channels == 'dead') / all_channels.shape[0]
+    print(f'{np.sum(all_channels == "dead")} ({prec_dead_ch*100:.0f}%) dead channels')
+    dead_channel_ids = total_recording[str(shank_num)] .get_channel_ids()[all_channels == 'dead']
+    out_channel_ids = total_recording[str(shank_num)] .get_channel_ids()[all_channels == 'out']
+
+    # Detect noisy channels
+    bad_channel_ids, all_channels = si.detect_bad_channels(total_recording[str(shank_num)] , method='mad', seed=42)
+    prec_noise_ch = np.sum(all_channels == 'noise') / all_channels.shape[0]
+    print(f'{np.sum(all_channels == "noise")} ({prec_noise_ch*100:.0f}%) noise channels')
+    noisy_channel_ids = total_recording[str(shank_num)] .get_channel_ids()[all_channels == 'noise']
+
+    # Interpolate over bad channels
+    total_recording[str(shank_num)]  = total_recording[str(shank_num)].set_probe(shank_probe)       
+    total_recording[str(shank_num)]  = si.interpolate_bad_channels(total_recording[str(shank_num)], np.concatenate((
+        dead_channel_ids, noisy_channel_ids)))
+
     print("Saving shank recording...")
     try:
         print(time.time())
@@ -159,7 +206,7 @@ if __name__ == "__main__":
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
         total_recording[str(shank_num)], shank_folder, data_name=f'shank_recording.bin', dtype=np.int16,
         chunksize=30000 * 8, export_probe=True, probe_name='probe.prb',
-        max_workers=8
+        max_workers=12
         )
     print(f"Saved binary recording to {filename}")
     try:

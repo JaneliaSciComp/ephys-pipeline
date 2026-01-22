@@ -1,4 +1,4 @@
-name: spikenv
+name: spikenv411
 channels:
   - pytorch
   - nvidia
@@ -213,8 +213,8 @@ dependencies:
       - pyqtgraph==0.12.0
       - rsa==4.9
       - probeinterface==0.2.24
-      - spikeinterface==0.101.2
+      - spikeinterface==0.103.2
       - numba==0.60.0
-      - kilosort==4.0.18
+      - kilosort==4.1.1
       - pandas==2.2.3
 prefix: /groups/scicompsoft/home/sheppardj/miniconda3/envs/kilosort
