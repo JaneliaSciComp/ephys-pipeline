@@ -102,7 +102,7 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num):
             sampling_frequency=SAMPLE_RATE, 
             num_channels=N_CHANNELS_PROBE
         )
-        recording = recording.frame_slice(start_frame=0, end_frame=30000 * 10)
+        #recording = recording.frame_slice(start_frame=0, end_frame=30000 * 10) for testing
         print(recording.get_total_duration())
 
         if recording.get_num_frames() == 0:
