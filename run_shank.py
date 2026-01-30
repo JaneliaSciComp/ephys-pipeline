@@ -4,6 +4,9 @@ import os
 import glob
 import spikeinterface.extractors as se
 import spikeinterface.full as si
+import spikeinterface.curation as sc
+import pandas as pd
+import numpy as np
 from pathlib import Path
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 import spikeinterface.preprocessing as spre
@@ -77,7 +80,7 @@ def get_sample_shifts(n_channels):
     sample_shifts = get_neuropixels_sample_shifts(total_channels, num_channels_per_adc, num_channels_in_adc)
     return sample_shifts
 
-def split_recording(recording_files, probe_name, global_probe_data, shank_num):
+def split_recording(recording_files, probe_name, global_probe_data, shank_num, shank_probe):
     """
     Process and clean the recording for a specific shank.
 
@@ -91,18 +94,23 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num):
         destriped_rec (RecordingExtractor): Processed and cleaned shank recording.
         recording_paths (list): Paths of recording files used.
     """
+    # ERROR: Uses global 'N_CHANNELS_PROBE' and 'SAMPLE_RATE' which are not defined in this function.
+    # Should probably use shank-specific channel count for slicing later on. 
+    # There is also a potential error in using 'set_channel_locations(global_probe_data.contact_positions)' if only shank channels are used later.
+
     recordings = []
     recording_paths = []
 
     for recording_file in recording_files:
         # Load and quick slice for preview (first 10 seconds, adjust as needed)
+        # ERROR HERE: N_CHANNELS_PROBE and SAMPLE_RATE may not be defined anywhere, and probably should be passed as arguments!
         recording = se.read_binary(
             recording_file, 
             dtype='int16', 
             sampling_frequency=SAMPLE_RATE, 
             num_channels=N_CHANNELS_PROBE
         )
-        #recording = recording.frame_slice(start_frame=0, end_frame=30000 * 10) for testing
+        recording = recording.frame_slice(start_frame=30000 * 0, end_frame=30000 * 1000) # for testing
         print(recording.get_total_duration())
 
         if recording.get_num_frames() == 0:
@@ -117,6 +125,8 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num):
             chunk_size=30000 * 10,
             n_jobs=12,
         )
+
+        print(saturation_idx)
         recording = si.remove_artifacts(
             recording,
             list_triggers=saturation_idx,
@@ -131,6 +141,7 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num):
     total_recording = si.concatenate_recordings(recordings)
     total_recording.set_probe(global_probe_data)
     total_recording.set_channel_locations(global_probe_data.contact_positions)
+
     total_recording = si.highpass_filter(total_recording, ftype='bessel', dtype='float32')
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
@@ -177,7 +188,11 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num):
     interp_rec = si.common_reference(interp_rec, reference='local')
 
     # Spatial destriping
-    destriped_rec = si.highpass_spatial_filter(interp_rec)
+    destriped_rec = si.highpass_spatial_filter(interp_rec, dtype='int16')
+
+    destriped_rec = destriped_rec.set_probe(shank_probe)
+
+    destriped_rec = spre.bandpass_filter(destriped_rec, freq_min=300., freq_max=7500., dtype='int16')
 
     return destriped_rec, recording_paths
 
@@ -202,9 +217,13 @@ if __name__ == "__main__":
 
     probe_file = folder / f"{probe}_probe_conf.json"
     probe_data = load_probe(probe_file)
+    shank_probe = load_probe(probe_file, shank_num)
+
+    print(shank_probe)
 
     recording_files = collect_files(data_folder, probe_name)
-    shank_recording, recording_paths = split_recording(recording_files, probe_name, probe_data, shank_num)
+    shank_recording, recording_paths = split_recording(recording_files, probe_name, probe_data, shank_num, shank_probe)
+
 
     output_folder.mkdir(parents=True, exist_ok=True)
     probe_folder = output_folder / probe 
@@ -212,7 +231,6 @@ if __name__ == "__main__":
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
-    shank_probe = load_probe(probe_file, shank_num)
     #total_recording[str(shank_num)] = total_recording[str(shank_num)].set_probe(shank_probe)
 
     print("Saving shank recording...")
@@ -237,6 +255,8 @@ if __name__ == "__main__":
     assert probe_path is not None, 'No probe information exported by SpikeInterface'
     kilosort_probe = io.load_probe(probe_path)
 
+    print(shank_recording.get_total_duration())
+
     print("Running Kilosort...")
     # This command will both run the spike-sorting analysis and save the results to
     # `DATA_DIRECTORY`.
@@ -247,6 +267,8 @@ if __name__ == "__main__":
         est_contam_rate, kept_spikes = run_kilosort(
             settings=settings, probe=kilosort_probe, filename=filename
             )
+
+
     
     print("done sorting.")
     try:
