@@ -217,4 +217,5 @@ dependencies:
       - numba==0.60.0
       - kilosort==4.1.1
       - pandas==2.2.3
+      - huggingface_hub==1.4.0
 prefix: /groups/scicompsoft/home/sheppardj/miniconda3/envs/kilosort
