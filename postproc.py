@@ -220,7 +220,7 @@ if __name__ == "__main__":
     folder = Path(sys.argv[1])
     probe = sys.argv[2]
     shank_num = sys.argv[3]
-    model_repo_id = sys.argv[4] if len(sys.argv) > 4 else None
+    model_repo_id = "SpikeInterface/UnitRefine_sua_mua_classifier_lightweight"
     
     # Set up paths
     output_folder = folder / "output"
