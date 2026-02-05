@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import numpy as np
+import pandas as pd
 from pathlib import Path
 import spikeinterface as si
 import spikeinterface.extractors as se
@@ -106,6 +107,30 @@ def load_recording_and_sorting(shank_folder, probe, n_channels_shank):
     
     return recording, sorting
 
+def load_sorting_analyzer(analyzer_path):
+    """
+    Load an existing SortingAnalyzer from disk.
+    
+    Args:
+        analyzer_path: Path to the sorting analyzer folder (without .zarr extension)
+        
+    Returns:
+        sorting_analyzer: SortingAnalyzer object
+    """
+    # SpikeInterface saves as .zarr directory, so add the extension
+    analyzer_path_zarr = analyzer_path.with_suffix('.zarr') if not str(analyzer_path).endswith('.zarr') else analyzer_path
+    
+    print(f"\nLoading existing SortingAnalyzer from {analyzer_path_zarr}")
+    sorting_analyzer = si.load_sorting_analyzer(folder=str(analyzer_path_zarr))
+    
+    # Display computed metrics
+    quality_metrics = list(sorting_analyzer.get_extension('quality_metrics').get_data().keys())
+    template_metrics = list(sorting_analyzer.get_extension('template_metrics').get_data().keys())
+    all_computed_metrics = quality_metrics + template_metrics
+    print(f"Loaded analyzer with {len(all_computed_metrics)} computed metrics.")
+    
+    return sorting_analyzer
+
 def compute_sorting_analyzer(recording, sorting, n_jobs=12):
     """
     Create SortingAnalyzer and compute all required extensions.
@@ -184,43 +209,81 @@ def apply_unitrefine_classification(sorting_analyzer, model_repo_id=None):
     for label, count in label_counts.items():
         percentage = (count / len(labels)) * 100
         print(f"  {label}: {count} units ({percentage:.1f}%)")
-    
+
+
     return labels, model_info
 
-def save_results(sorting_analyzer, labels, shank_folder):
+def save_results(sorting_analyzer, all_labels_df, shank_folder, analyzer_already_exists=False, models_to_run=None):
     """
     Save sorting analyzer and labels to disk.
     
     Args:
         sorting_analyzer: SortingAnalyzer object
-        labels: DataFrame with unit classifications
+        all_labels_df: DataFrame with concatenated labels from all models
         shank_folder: Path to shank output folder
+        analyzer_already_exists: If True, skip saving the analyzer (only save labels)
+        models_to_run: List of model names for column renaming
     """
-    # Save sorting analyzer
     analyzer_path = shank_folder / 'kilosort4' / 'sorting_analyzer'
-    print(f"\nSaving SortingAnalyzer to {analyzer_path}")
-    sorting_analyzer.save_as(folder=str(analyzer_path), format="zarr")
+    analyzer_path_zarr = analyzer_path.with_suffix('.zarr')
     
-    # Save labels
-    labels_path = shank_folder / 'unit_labels.csv'
-    print(f"Saving unit labels to {labels_path}")
-    labels.to_csv(labels_path, index=True)
+    # Save sorting analyzer only if it doesn't already exist
+    if not analyzer_already_exists:
+        print(f"\nSaving SortingAnalyzer to {analyzer_path_zarr}")
+        sorting_analyzer.save_as(folder=str(analyzer_path), format="zarr")
+    else:
+        print(f"\nSortingAnalyzer already exists at {analyzer_path_zarr}, skipping save")
+    
+    # Rename columns to indicate which model they come from
+    if models_to_run is not None and len(all_labels_df.columns) == len(models_to_run) * 2:
+        # Rename columns based on model type
+        new_columns = []
+        for i, model_name in enumerate(models_to_run):
+            model_part = model_name.split('/')[-1]
+            # Extract model type: "sua_mua" or "noise_neural"
+            if 'sua_mua' in model_part:
+                model_type = 'sua'
+            elif 'noise_neural' in model_part:
+                model_type = 'noise'
+            else:
+                model_type = model_part.replace('UnitRefine_', '').replace('_classifier_lightweight', '')
+            
+            # Each model has 2 columns (prediction and confidence)
+            col_idx = i * 2
+            new_columns.append(f'{model_type}_prediction')
+            new_columns.append(f'{model_type}_confidence')
+        
+        all_labels_df.columns = new_columns
+    else:
+        print(f"Warning: Column count mismatch. Expected {len(models_to_run) * 2 if models_to_run else 'unknown'}, got {len(all_labels_df.columns)}")
+    
+    # Save combined labels to single CSV
+    labels_path = shank_folder / 'kilosort4' / 'unit_labels.tsv'
+    print(f"\nSaving combined unit labels to {labels_path}")
+    all_labels_df.to_csv(labels_path, index=True)
     
     print("Post-processing complete!")
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: postproc.py <folder> <probe> <shank_num> [model_repo_id]")
+        print("Usage: postproc.py <folder> <probe> <shank_num>")
         print("  folder: Base folder containing data and output directories")
         print("  probe: Probe name (e.g., 'a', 'b')")
         print("  shank_num: Shank number (e.g., 1, 2, 3, 4)")
-        print("  model_repo_id: Optional model repository ID (default: SUA/MUA classifier)")
+        print("\nThis script runs two models:")
+        print("  - SpikeInterface/UnitRefine_sua_mua_classifier_lightweight")
+        print("  - SpikeInterface/UnitRefine_noise_neural_classifier_lightweight")
         sys.exit(1)
     
     folder = Path(sys.argv[1])
     probe = sys.argv[2]
     shank_num = sys.argv[3]
-    model_repo_id = "SpikeInterface/UnitRefine_sua_mua_classifier_lightweight"
+    
+    # Define models to run
+    models_to_run = [
+        "SpikeInterface/UnitRefine_sua_mua_classifier_lightweight",
+        "SpikeInterface/UnitRefine_noise_neural_classifier_lightweight"
+    ]
     
     # Set up paths
     output_folder = folder / "output"
@@ -231,6 +294,9 @@ if __name__ == "__main__":
     print(f"Post-processing shank {shank_num} for probe {probe}")
     print(f"Folder: {folder}")
     print(f"Shank folder: {shank_folder}")
+    print(f"\nRunning {len(models_to_run)} models:")
+    for model in models_to_run:
+        print(f"  - {model}")
     
     # Load probe configuration
     print(f"\nLoading probe configuration from {probe_file}")
@@ -242,21 +308,43 @@ if __name__ == "__main__":
     
     print(f"Number of channels in shank: {n_channels_shank}")
     
-    # Load recording and sorting
-    recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)
+    # Check if sorting analyzer already exists
+    # SpikeInterface saves as .zarr directory, so check for that
+    analyzer_path = shank_folder / 'kilosort4' / 'sorting_analyzer'
+    analyzer_path_zarr = analyzer_path.with_suffix('.zarr')
+    analyzer_exists = analyzer_path_zarr.exists() or analyzer_path.exists()
     
-    print(f"Recording: {recording.get_num_channels()} channels, "
-          f"{recording.get_total_duration():.2f} seconds")
-    print(f"Sorting: {len(sorting.unit_ids)} units")
+    if analyzer_exists:
+        print(f"\nFound existing SortingAnalyzer at {analyzer_path_zarr}")
+        print("Loading existing analyzer (skipping computation)...")
+        sorting_analyzer = load_sorting_analyzer(analyzer_path)
+    else:
+        print(f"\nNo existing SortingAnalyzer found at {analyzer_path}")
+        print("Computing new analyzer...")
+        
+        # Load recording and sorting
+        recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)
+        
+        print(f"Recording: {recording.get_num_channels()} channels, "
+              f"{recording.get_total_duration():.2f} seconds")
+        print(f"Sorting: {len(sorting.unit_ids)} units")
+        
+        # Create SortingAnalyzer and compute extensions
+        sorting_analyzer = compute_sorting_analyzer(recording, sorting, n_jobs=12)
     
-    # Create SortingAnalyzer and compute extensions
-    sorting_analyzer = compute_sorting_analyzer(recording, sorting, n_jobs=12)
-    
-    # Apply UnitRefine classification
-    labels, model_info = apply_unitrefine_classification(sorting_analyzer, model_repo_id)
+    # Apply UnitRefine classification for each model
+    all_labels = []
+    for i, model_repo_id in enumerate(models_to_run, 1):
+        print(f"\n{'='*60}")
+        print(f"Running model {i}/{len(models_to_run)}: {model_repo_id}")
+        print(f"{'='*60}")
+        labels, model_info = apply_unitrefine_classification(sorting_analyzer, model_repo_id)
+        all_labels.append(labels)
+
+    all_labels = pd.concat(all_labels, axis=1)
     
     # Save results
-    save_results(sorting_analyzer, labels, shank_folder)
+    save_results(sorting_analyzer, all_labels, shank_folder, analyzer_already_exists=analyzer_exists, models_to_run=models_to_run)
     
     print(f"\nPost-processing complete for {probe} shank {shank_num}!")
 
