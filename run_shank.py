@@ -16,47 +16,10 @@ from kilosort import io
 from kilosort import run_kilosort
 import time
 from get_artifacts import detect_saturation_periods
+from probe_utils import load_probe
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
-
-def find_active_channels(probe_dict):
-    dev_ind = np.array(probe_dict['probes'][0]["device_channel_indices"])
-    return dev_ind != -1
-
-def find_shank_channels(probe_dict, shank_num):
-    shank_ind = np.array(probe_dict["shank_ids"])
-    # Convert to string for comparison if needed, or compare directly if types match
-    shank_num_str = str(shank_num)
-    return np.array([str(s) == shank_num_str for s in shank_ind])
-
-def load_probe(probe_file, shank_num=None, n_channels_shank=None):
-    # Load probe configuration file
-    with open(probe_file, 'r') as f:
-        probe_dict = json.load(f)
-    
-    active_channels_mask = find_active_channels(probe_dict)
-    probe = probe_dict['probes'][0] # get the first probe
-
-    # First filter by active channels
-    for key in ['contact_positions', 'contact_plane_axes', 'contact_shapes', 'contact_shape_params', 'device_channel_indices', 'contact_ids', 'shank_ids']:
-        probe[key] = np.array(probe[key])[active_channels_mask]
-
-    # Then filter by shank if specified
-    n_channels = None
-    if shank_num is not None:
-        shank_channels_mask = find_shank_channels(probe, shank_num)
-        #shank_channels_mask = shank_channels_mask[active_channels_mask]
-        for key in ['contact_positions', 'contact_plane_axes', 'contact_shapes', 'contact_shape_params', 'device_channel_indices', 'contact_ids', 'shank_ids']:
-            probe[key] = probe[key][shank_channels_mask]
-        # Count actual channels from JSON after filtering
-        n_channels = len(probe['device_channel_indices'])
-        # Use provided n_channels_shank if given, otherwise use count from JSON
-        channels_count = n_channels_shank if n_channels_shank is not None else n_channels
-        probe['device_channel_indices'] = np.arange(0, channels_count)
-
-    probe = pi.Probe.from_dict(probe)
-    return probe, n_channels
 
 def collect_files(data_folder, probe_name):
     '''Collect all files for each probe within data_folder
