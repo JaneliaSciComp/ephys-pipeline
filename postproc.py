@@ -124,6 +124,28 @@ def compute_sorting_analyzer(recording, sorting, n_jobs=12):
     
     return sorting_analyzer
 
+def save_unitrefine_dataset(sorting_analyzer, shank_folder):
+    """
+    Save the feature dataset that is provided to the UnitRefine model.
+    
+    This is constructed from the quality and template metrics extensions of the
+    SortingAnalyzer, which are the inputs used by the UnitRefine classifiers.
+    """
+    # Collect feature tables used by the model
+    qm_ext = sorting_analyzer.get_extension('quality_metrics')
+    tm_ext = sorting_analyzer.get_extension('template_metrics')
+
+    qm_df = qm_ext.get_data()
+    tm_df = tm_ext.get_data()
+
+    # Combine into a single feature matrix
+    features_df = pd.concat([qm_df, tm_df], axis=1)
+
+    # Save alongside the other Kilosort outputs
+    dataset_path = shank_folder / 'kilosort4' / 'unitrefine_input_metrics.tsv'
+    print(f"\nSaving UnitRefine input dataset to {dataset_path}")
+    features_df.to_csv(dataset_path, sep='\t', index=True)
+
 def apply_unitrefine_classification(sorting_analyzer, model_repo_id=None):
     """
     Apply UnitRefine model to classify units.
@@ -282,6 +304,9 @@ if __name__ == "__main__":
         # Create SortingAnalyzer and compute extensions
         sorting_analyzer = compute_sorting_analyzer(recording, sorting, n_jobs=12)
     
+    # Save the dataset that will be provided to the UnitRefine models
+    save_unitrefine_dataset(sorting_analyzer, shank_folder)
+
     # Apply UnitRefine classification for each model
     all_labels = []
     for i, model_repo_id in enumerate(models_to_run, 1):
