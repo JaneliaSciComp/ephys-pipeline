@@ -29,8 +29,7 @@ for probe in a b; do
         
         bsub -n 12 \
                 -o "$output_file" -N -u "$email" \
-                bash -c "source ~/.bashrc && conda activate spikenv411 && python -u postproc.py '${day_dir}' '${probe}' '${shank_num}'"
-                bash -c "source ~/.bashrc && conda activate spikenv411 && python -u extract_unit_data.py --data_dir '${day_dir}' --probe '${probe}' --shank '${shank_num}' "
+                bash -c "source ~/.bashrc && conda activate spikenv411 && python postproc.py '${day_dir}' '${probe}' '${shank_num}' && python extract_unitmatch_data.py --data_dir '${day_dir}' --probe '${probe}' --shank '${shank_num}'"
         
         if [ $? -eq 0 ]; then
             echo "Job submitted successfully for probe ${probe}, shank ${shank_num}"
