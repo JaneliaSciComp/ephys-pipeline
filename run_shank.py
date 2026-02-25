@@ -141,6 +141,7 @@ def split_recording(recording_files, probe_name, global_probe_data, shank_num, s
     _, all_channels_dead = si.detect_bad_channels(destriped_rec, method='coherence+psd', seed=42)
     dead_mask = (all_channels_dead == 'dead')
     out_mask = (all_channels_dead == 'out')
+    print(f"{out_mask.sum()} ({np.mean(out_mask) * 100:.0f}%) out channels in shank {shank_num}")
     dead_channel_ids = destriped_rec.get_channel_ids()[dead_mask]
     prec_dead = np.mean(dead_mask) * 100
     print(f"{dead_mask.sum()} ({prec_dead:.0f}%) dead channels in shank {shank_num}")

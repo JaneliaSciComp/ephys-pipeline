@@ -185,7 +185,7 @@ def apply_unitrefine_classification(sorting_analyzer, model_repo_id=None):
 
     return labels, model_info
 
-def save_results(sorting_analyzer, all_labels_df, shank_folder, analyzer_already_exists=False, models_to_run=None):
+def save_results(sorting_analyzer, all_labels_df, shank_folder, models_to_run=None):
     """
     Save sorting analyzer and labels to disk.
     
@@ -199,13 +199,9 @@ def save_results(sorting_analyzer, all_labels_df, shank_folder, analyzer_already
     analyzer_path = shank_folder / 'kilosort4' / 'sorting_analyzer'
     analyzer_path_zarr = analyzer_path.with_suffix('.zarr')
     
-    # Save sorting analyzer only if it doesn't already exist
-    if not analyzer_already_exists:
-        print(f"\nSaving SortingAnalyzer to {analyzer_path_zarr}")
-        sorting_analyzer.save_as(folder=str(analyzer_path), format="zarr")
-    else:
-        print(f"\nSortingAnalyzer already exists at {analyzer_path_zarr}, skipping save")
-    
+    print(f"\nSaving SortingAnalyzer to {analyzer_path_zarr}")
+    sorting_analyzer.save_as(folder=str(analyzer_path), format="zarr")
+ 
     # Rename columns to indicate which model they come from
     if models_to_run is not None and len(all_labels_df.columns) == len(models_to_run) * 2:
         # Rename columns based on model type
@@ -309,7 +305,7 @@ if __name__ == "__main__":
     all_labels = pd.concat(all_labels, axis=1)
     
     # Save results
-    save_results(sorting_analyzer, all_labels, shank_folder, analyzer_already_exists=analyzer_exists, models_to_run=models_to_run)
+    save_results(sorting_analyzer, all_labels, shank_folder, models_to_run=models_to_run)
     
     print(f"\nPost-processing complete for {probe} shank {shank_num}!")
 
