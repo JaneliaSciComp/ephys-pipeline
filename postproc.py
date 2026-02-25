@@ -283,26 +283,16 @@ if __name__ == "__main__":
     # Check if sorting analyzer already exists
     # SpikeInterface saves as .zarr directory, so check for that
     analyzer_path = shank_folder / 'kilosort4' / 'sorting_analyzer'
-    analyzer_path_zarr = analyzer_path.with_suffix('.zarr')
-    analyzer_exists = analyzer_path_zarr.exists() or analyzer_path.exists()
     
-    if analyzer_exists:
-        print(f"\nFound existing SortingAnalyzer at {analyzer_path_zarr}")
-        print("Loading existing analyzer (skipping computation)...")
-        sorting_analyzer = load_sorting_analyzer(analyzer_path)
-    else:
-        print(f"\nNo existing SortingAnalyzer found at {analyzer_path}")
-        print("Computing new analyzer...")
-        
-        # Load recording and sorting
-        recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)
-        
-        print(f"Recording: {recording.get_num_channels()} channels, "
-              f"{recording.get_total_duration():.2f} seconds")
-        print(f"Sorting: {len(sorting.unit_ids)} units")
-        
-        # Create SortingAnalyzer and compute extensions
-        sorting_analyzer = compute_sorting_analyzer(recording, sorting, n_jobs=12)
+    # Load recording and sorting
+    recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)
+    
+    print(f"Recording: {recording.get_num_channels()} channels, "
+            f"{recording.get_total_duration():.2f} seconds")
+    print(f"Sorting: {len(sorting.unit_ids)} units")
+    
+    # Create SortingAnalyzer and compute extensions
+    sorting_analyzer = compute_sorting_analyzer(recording, sorting, n_jobs=12)
     
     # Save the dataset that will be provided to the UnitRefine models
     save_unitrefine_dataset(sorting_analyzer, shank_folder)
