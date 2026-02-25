@@ -197,27 +197,6 @@ if __name__ == "__main__":
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
-    # Quick gate: run simple sorter to check if there are any spikes worth processing
-    print("Running simple sorter spike-detection gate...")
-    simple_sort_folder = shank_folder / "simple_sorter_check"
-    quick_sorting = si.run_sorter(
-        sorter_name='simple',
-        recording=shank_recording,
-        output_folder=simple_sort_folder,
-        remove_existing_folder=True,
-        verbose=False,
-    )
-    n_units = len(quick_sorting.get_unit_ids())
-    print(f"Simple sorter found {n_units} unit(s) on shank {shank_num}.")
-
-    if n_units == 0:
-        print(f"No spikes detected on shank {shank_num}. Skipping Kilosort.")
-        sentinel = shank_folder / "NO_GOOD_SPIKES"
-        sentinel.write_text(
-            f"Simple sorter found 0 units on shank {shank_num}. Kilosort skipped.\n"
-        )
-        sys.exit(0)
-
     #total_recording[str(shank_num)] = total_recording[str(shank_num)].set_probe(shank_probe)
 
     print("Saving shank recording...")
