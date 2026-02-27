@@ -1,4 +1,4 @@
-#!/bin/bash
+fsdfdsklsdjl#!/bin/bash
 
 # Check if an argument was provided
 if [ $# -eq 0 ]; then
@@ -20,8 +20,8 @@ fi
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"
 
-for probe in b; do
-    for shank_num in 0; do
+for probe in a b; do
+    for shank_num in 0 1 2 3; do
         dir_name=$(basename "$day_dir")
         output_file="output/output_${dir_name}_${probe}_shank${shank_num}.log"
 
