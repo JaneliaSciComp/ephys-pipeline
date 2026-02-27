@@ -1,4 +1,4 @@
-fsdfdsklsdjl#!/bin/bash
+#!/bin/bash
 
 # Check if an argument was provided
 if [ $# -eq 0 ]; then
