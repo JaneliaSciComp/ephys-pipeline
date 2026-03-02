@@ -19,8 +19,9 @@ if [ ! -d "$DAY_DIR/data" ]; then
 fi
 
 DIR_NAME="$(basename "$DAY_DIR")"
-SCRIPT_DIR="/groups/voigts/voigtslab/submit_a_day/ephys-pipeline" # where submit_ks and submit_sleap live; this should be stable, and we can drop in developed stuff
-SLEAP_ENV_ACTIVATE="$SCRIPT_DIR/envs/sleap/bin/activate"
+BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
+SCRIPT_DIR="$BASE_DIR/ephys-pipeline" # where submit_all.sh and submit_sleap.sh live
+SLEAP_ENV_ACTIVATE="$BASE_DIR/envs/sleap/bin/activate"
 
 
 if [ ! -f "$SCRIPT_DIR/submit_all.sh" ]; then
