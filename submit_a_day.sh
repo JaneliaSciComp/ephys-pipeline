@@ -66,4 +66,4 @@ bsub -J "$SLEAP_JOB_NAME" \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -lc "cd '$DAY_DIR' && source '$SLEAP_ENV_ACTIVATE' && bash '$SCRIPT_DIR/submit_sleap.sh'"
+     bash -lc "cd '$DAY_DIR' && source '$SLEAP_ENV_ACTIVATE' && bash '$SCRIPT_DIR/submit_sleap.sh'" 
