@@ -23,8 +23,8 @@ SCRIPT_DIR="/groups/voigts/voigtslab/submit_a_day/ephys-pipeline" # where submit
 SLEAP_ENV_ACTIVATE="$SCRIPT_DIR/envs/sleap/bin/activate"
 
 
-if [ ! -f "$SCRIPT_DIR/ephys-pipeline/submit_all.sh" ]; then
-  echo "ERROR: submit_ks.sh not found next to this script: $SCRIPT_DIR/ephys-pipeline/submit_all.sh" >&2
+if [ ! -f "$SCRIPT_DIR/submit_all.sh" ]; then
+  echo "ERROR: submit_all.sh not found next to this script: $SCRIPT_DIR/submit_all.sh" >&2
   exit 2
 fi
 
@@ -49,7 +49,7 @@ bsub -J "$NPX_SUBMIT_JOB_NAME" \
      -R "rusage[mem=2000]" \
      -oo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.err" \
-     bash -lc "cd '$SCRIPT_DIR/ephys-pipeline' && bash '$SCRIPT_DIR/submit_all.sh' '$DAY_DIR'"
+     bash -lc "cd '$SCRIPT_DIR' && bash '$SCRIPT_DIR/submit_all.sh' '$DAY_DIR'"
 
 
 # -----------------------------
