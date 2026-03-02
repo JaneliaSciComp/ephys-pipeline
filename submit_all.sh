@@ -23,7 +23,7 @@ email="${user}@janelia.hhmi.org"
 for probe in a b; do
     for shank_num in 0 1 2 3; do
         dir_name=$(basename "$day_dir")
-        output_file="output/output_${dir_name}_${probe}_shank${shank_num}.log"
+        output_file="${daydir}output/output_${dir_name}_${probe}_shank${shank_num}.log"
 
         echo "Submitting job for ${day_dir}, probe ${probe}, shank ${shank_num}"
         
