@@ -60,10 +60,9 @@ mkdir -p "$DAY_DIR/sleap_output"
 SLEAP_JOB_NAME="sleap_${DIR_NAME}"
 echo "Submitting SLEAP job: $SLEAP_JOB_NAME"
 bsub -J "$SLEAP_JOB_NAME" \
-     -q gpu_l4 \
+     -q gpu_a100 \
      -gpu "num=1" \
      -n 5 \
-     -R "rusage[mem=16000]" \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
