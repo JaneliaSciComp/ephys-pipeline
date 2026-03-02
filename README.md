@@ -1,73 +1,100 @@
 
-# Spike Sorting Pipeline
+# Ephys Pipeline
 
-This repository contains scripts and setup for running a spike sorting pipeline, including data preprocessing and analysis for our electrophysiology data.
-This was created based on voigtslab ephys-pipeline-all repo, which was forked from sci comp git - given the permissions, made a new repo for shared lab work.
+Scripts for spike sorting and pose estimation for neuropixels recordings. The repo lives on the cluster at `/groups/voigts/voigtslab/submit_a_day/ephys-pipeline` and is what gets called when you submit a day.
 
-## Getting Started
+## Workflow Overview
 
-### Cloning the Repository
+The typical entry point is `submit_a_day.sh`, which submits both the Kilosort spike sorting and SLEAP pose estimation jobs for a full recording day.
 
-First, clone the repository to your local machine:
-
-```bash
-git clone https://github.com/voigtslab/ephys-pipeline-lab.git
+```
+submit_a_day.sh <day_directory>
+  ├── submit_all.sh     → bsub jobs per probe/shank (Kilosort, GPU a100)
+  └── submit_sleap.sh   → bsub job for pose tracking (GPU l4)
 ```
 
-### Creating the Conda Environment
+## Usage
 
-To create the environment necessary for running the pipeline, use the provided `sorting_env.yml` file, or just install the basics yourself:
+### Submitting a full day
 
+```bash
+bash submit_a_day.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+```
+
+This expects the day directory to have a `data/` subdirectory. It will:
+1. Submit 8 Kilosort jobs (probes a/b × shanks 0–3) via `submit_all.sh`
+2. Submit a SLEAP tracking job via `submit_sleap.sh`
+
+Output logs go to `<day_dir>/output/` and `<day_dir>/sleap_output/`.
+
+### Submitting spike sorting only
+
+```bash
+bash submit_all.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+```
+
+Submits one `bsub` job per probe (`a`, `b`) per shank (`0`–`3`), each running `run_pipeline.py`. Jobs run on `gpu_a100`, 12 cores, 4 hour wall time. You'll get an email at `$USER@janelia.hhmi.org` on completion or error.
+
+### Submitting SLEAP only
+
+```bash
+cd <day_directory>
+bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh
+```
+
+Tracks all `data/compressed*.mp4` files using the square arena SLEAP models. Output `.slp` and `.analysis.h5` files go to `sleap_output/`. To use a different arena model (big maze, minimaze), edit the model paths at the top of `submit_sleap.sh`.
+
+## Repository Structure
+
+```
+ephys-pipeline/
+├── submit_a_day.sh      # top-level entry point: submits KS + SLEAP for a day
+├── submit_all.sh        # submits per-shank Kilosort jobs
+├── submit_sleap.sh      # submits SLEAP tracking job
+├── submit_postproc.sh   # post-processing submission
+├── run_pipeline.py      # per-shank Kilosort pipeline (called by submit_all.sh)
+├── run_shank.py         # single-shank runner
+├── postproc.py          # post-processing
+├── probe_utils.py       # probe geometry utilities
+├── sorting_env.yml      # conda environment spec
+└── ...
+```
+
+## Environment
+
+The spike sorting environment lives at:
+```
+/groups/voigts/voigtslab/submit_a_day/envs/spikenv411/
+```
+
+The SLEAP environment lives at:
+```
+/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/sleap/
+```
+
+To recreate the spike sorting environment locally:
 ```bash
 conda env create -f sorting_env.yml
 ```
 
-Recommend updating to KS 4.1.1, which worked well with the initial commit in this repo
+Kilosort 4.1.1 is recommended.
 
-### Chunking or Total
-In the /scripts directory there are two versions of the script that can be run from the cluster
-`run_pipeline.sh` that runs the pipeline for the full session
-`run_chunks_pipeline.sh` that will segment the clips into 1 hour chunks (default and can be changed in [config.py](https://github.com/joannercsheppard/ephys-pipeline/blob/main/pipeline/config.py)).
+## Cluster Notes
 
-at time of making this repo, currenly we're running shank by shank with submit_all.sh
+- Jobs run on the Janelia LSF cluster via `bsub`
+- Spike sorting: `gpu_a100` queue, 1 GPU, 12 cores, 4 hr wall time
+- SLEAP: `gpu_l4` queue, 1 GPU, 5 cores, 36 hr wall time
+- The submitter job itself runs on the `short` queue (30 min, 1 core)
 
-### Modifying File Locations
+### First-time setup / permissions
 
-Open the [`run_pipeline.sh`](https://github.com/joannercsheppard/ephys-pipeline/blob/fc7846cfe5814c7210c156a436b7ca04fc4b8339/scripts/run_pipeline.sh#L5) or [`run_chunks_pipeline.sh`](https://github.com/joannercsheppard/ephys-pipeline/blob/fc7846cfe5814c7210c156a436b7ca04fc4b8339/scripts/run_chunks_pipeline.sh#L5) script and update the `FILEPATH` variable with the correct file location for your data:
-
+If scripts aren't executable after cloning:
 ```bash
-FILEPATH="/groups/voigts/voigtslab/neuropixels_tests_aug_2024/2024_08_06_npx_long_test/"
+chmod +x submit_a_day.sh submit_all.sh submit_sleap.sh submit_postproc.sh
+chmod +x run_pipeline.py run_shank.py postproc.py
 ```
 
-Or if using submit_all.sh just run it from the repo and provide the daily data folder path as user arg input when running the script
-
-### Running the Spike Sorting Pipeline
-
-Once everything is set up, you can run the spike sorting pipeline with:
-
+If you see Windows line endings causing issues on Linux:
 ```bash
-ephys-pipeline/run_pipeline.sh
+dos2unix submit_a_day.sh submit_all.sh submit_sleap.sh
 ```
-
-or rather as something like so for shank based sorting:
-
-```bash
-./submit_all.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
-```
-
-### Issues
-### BEFORE FIRST RUN: Setting Permissions, LF line endings for running on linux
-
-As the cluster is Linux-based, when first running the script you may need to change the file permissions using `chmod +x <filename>`. Changing the permissions will ensure the necessary files are executable:
-
-```bash
-cd ephys-pipeline/pipeline/
-chmod +x analysis.py config.py detection.py motion.py preprocess.py split.py utils.py
-cd ..
-cd scripts
-chmod +x run_pipeline.sh run_chunk_pipeline.sh
-cd ..
-cd ..
-```
-
-note we can probably set up git attributes to keep line endings consistent in longer run, and automate lf instead of crlf endings for linux compatability
