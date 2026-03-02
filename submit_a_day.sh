@@ -19,7 +19,7 @@ if [ ! -d "$DAY_DIR/data" ]; then
 fi
 
 DIR_NAME="$(basename "$DAY_DIR")"
-SCRIPT_DIR="/groups/voigts/voigtslab/submit_a_day" # where submit_ks and submit_sleap live; this should be stable, and we can drop in developed stuff
+SCRIPT_DIR="/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/" # where submit_ks and submit_sleap live; this should be stable, and we can drop in developed stuff
 SLEAP_ENV_ACTIVATE="$SCRIPT_DIR/envs/sleap/bin/activate"
 
 
@@ -49,7 +49,7 @@ bsub -J "$NPX_SUBMIT_JOB_NAME" \
      -R "rusage[mem=2000]" \
      -oo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.err" \
-     bash -lc "cd '$SCRIPT_DIR/ephys-pipeline' && bash '$SCRIPT_DIR/ephys-pipeline/submit_all.sh' '$DAY_DIR'"
+     bash -lc "cd '$SCRIPT_DIR/ephys-pipeline' && bash '$SCRIPT_DIR/submit_all.sh' '$DAY_DIR'"
 
 
 # -----------------------------
@@ -66,4 +66,4 @@ bsub -J "$SLEAP_JOB_NAME" \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -lc "cd '$DAY_DIR' && source '$SLEAP_ENV_ACTIVATE' && bash '$SCRIPT_DIR/ephys-pipeline/submit_sleap.sh'" 
+     bash -lc "cd '$DAY_DIR' && source '$SLEAP_ENV_ACTIVATE' && bash '$SCRIPT_DIR/submit_sleap.sh'" 
