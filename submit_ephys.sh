@@ -18,8 +18,9 @@ if [ ! -d "$DAY_DIR/data" ]; then
 fi
 
 DIR_NAME="$(basename "$DAY_DIR")"
-SCRIPT_DIR="/groups/voigts/voigtslab/submit_a_day"
-ENV_ACTIVATE="$SCRIPT_DIR/envs/spikenv411/bin/activate"
+BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
+SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
+ENV_BIN="$BASE_DIR/envs/spikenv411/bin"
 
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"
@@ -41,7 +42,7 @@ for probe in a b; do
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         bash -lc "source '$ENV_ACTIVATE' && python -u '$SCRIPT_DIR/ephys-pipeline/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
+         bash -lc "PATH='$ENV_BIN:\$PATH' python -u '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
   done
 done
 
