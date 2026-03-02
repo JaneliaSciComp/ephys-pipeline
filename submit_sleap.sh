@@ -27,14 +27,14 @@ for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
         echo "Output file $output_path already exists. Skipping..."
         continue
     fi
-    sleap-track \
+    "$SLEAP_ENV_BIN/python" "$SLEAP_ENV_BIN/sleap-track" \
         "$mp4_file" \
         -m "$CENTROID_MODEL" \
         -m "$INSTANCE_MODEL" \
         -o "$output_path" \
         --verbosity json \
         --batch_size 4 \
-        --max_instances 1 
+        --max_instances 1
         # \
         # --verbosity json #\ # ac edit dec 12
         # i think tracking is unnecessary cause it's identity assignment
@@ -44,7 +44,7 @@ for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
         # --tracking.match hungarian
 
     echo "Converting $output_path to $analysis_path..."
-    sleap-convert \
+    "$SLEAP_ENV_BIN/python" "$SLEAP_ENV_BIN/sleap-convert" \
         "$output_path" \
         --format analysis \
         -o "$analysis_path"
