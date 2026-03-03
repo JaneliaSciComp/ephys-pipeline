@@ -4,7 +4,7 @@
 #   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411/bin/pip install conda-pack
 #
 # Step 2 — pack the existing communal conda env (run once on the cluster):
-#   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411/bin/python -m conda_pack \
+#   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411/bin/conda-pack \
 #     --prefix /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411 \
 #     -o /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/spikenv411_env.tar.gz
 #
@@ -18,17 +18,10 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
     Description Kilosort4 + SpikeInterface spike-sorting pipeline
 
 %files
-    # The packed env tarball produced in Step 2 above
-    spikenv411_env.tar.gz /tmp/spikenv411_env.tar.gz
+    # Absolute path so apptainer can find it without fakeroot
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/spikenv411_env.tar.gz /tmp/spikenv411_env.tar.gz
 
 %post
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q && apt-get install -y -q \
-        libglib2.0-0 \
-        libsm6 \
-        libxext6 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
     mkdir -p /opt/spikenv411
     tar -xzf /tmp/spikenv411_env.tar.gz -C /opt/spikenv411
     rm /tmp/spikenv411_env.tar.gz

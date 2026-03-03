@@ -4,7 +4,7 @@
 #   /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap/bin/pip install conda-pack
 #
 # Step 2 — pack the existing communal conda env (run once on the cluster):
-#   /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap/bin/python -m conda_pack \
+#   /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap/bin/conda-pack \
 #     --prefix /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap \
 #     -o /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz
 #
@@ -15,17 +15,10 @@ Bootstrap: docker
 From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
 
 %files
-    # The packed env tarball produced in Step 1 above
-    sleap_env.tar.gz /tmp/sleap_env.tar.gz
+    # Absolute path so apptainer can find it without fakeroot
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz /tmp/sleap_env.tar.gz
 
 %post
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q && apt-get install -y -q \
-        libglib2.0-0 \
-        libsm6 \
-        libxext6 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
     mkdir -p /opt/sleap
     tar -xzf /tmp/sleap_env.tar.gz -C /opt/sleap
     rm /tmp/sleap_env.tar.gz
