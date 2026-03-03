@@ -2,15 +2,12 @@
 """Run the full spike-sorting pipeline for one probe/shank."""
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
-# sys.executable may be a symlink back to base conda Python; use sys.prefix to
-# get the active env root and construct the real interpreter path.
-PYTHON = os.path.join(sys.prefix, "bin", "python")
+PYTHON = sys.executable
 
 
 def run(cmd):

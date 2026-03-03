@@ -20,7 +20,8 @@ fi
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
 SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
-ENV_BIN="$SCRIPT_DIR/envs/spikenv411/bin"
+# SPIKENV_SIF is passed in from submit_a_day.sh via the environment
+: "${SPIKENV_SIF:="$SCRIPT_DIR/containers/spikenv411.sif"}"
 
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"
@@ -42,7 +43,8 @@ for probe in a b; do
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         bash -c "unset PYTHONPATH; '$ENV_BIN/python' '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
+         apptainer exec --nv "$SPIKENV_SIF" \
+             python "$SCRIPT_DIR/run_pipeline.py" "$DAY_DIR" "$probe" "$shank_num"
   done
 done
 
