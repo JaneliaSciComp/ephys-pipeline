@@ -50,7 +50,7 @@ bsub -J "$NPX_SUBMIT_JOB_NAME" \
      -R "rusage[mem=2000]" \
      -oo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.err" \
-     bash -lc "cd '$SCRIPT_DIR' && bash '$SCRIPT_DIR/submit_ephys.sh' '$DAY_DIR'"
+     bash -c "cd '$SCRIPT_DIR' && bash '$SCRIPT_DIR/submit_ephys.sh' '$DAY_DIR'"
 
 
 # -----------------------------
@@ -66,4 +66,4 @@ bsub -J "$SLEAP_JOB_NAME" \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -lc "cd '$DAY_DIR' && SLEAP_ENV_BIN='$SLEAP_ENV_BIN' bash '$SCRIPT_DIR/submit_sleap.sh'"
+     bash -c "unset PYTHONPATH; cd '$DAY_DIR' && SLEAP_ENV_BIN='$SLEAP_ENV_BIN' bash '$SCRIPT_DIR/submit_sleap.sh'"
