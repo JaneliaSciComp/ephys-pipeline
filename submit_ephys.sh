@@ -20,7 +20,7 @@ fi
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
 SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
-ENV_BIN="$SCRIPT_DIR/envs/spikenv411/"
+ENV_BIN="$SCRIPT_DIR/envs/spikenv411/bin"
 
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"
@@ -42,7 +42,7 @@ for probe in a b; do
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         bash -lc " conda activate '$ENV_BIN' -u '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
+         bash -lc "'$ENV_BIN/python' '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
   done
 done
 
