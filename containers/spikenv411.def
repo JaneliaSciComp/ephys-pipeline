@@ -1,6 +1,9 @@
 # Build instructions:
 #
 # Step 1 — install conda-pack into the env if needed:
+#   PYTHONNOUSERSITE=1 /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411/bin/pip install --no-user \
+#     spikeinterface==0.103.2 kilosort==4.1.1 numba==0.60.0 pandas==2.2.3 \
+#     huggingface_hub==1.4.0 skops==0.13.0
 #   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/spikenv411/bin/pip install conda-pack
 #
 # Step 2 — pack the existing communal conda env (run once on the cluster):
