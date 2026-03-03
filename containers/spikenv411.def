@@ -19,12 +19,12 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
 
 %files
     # Absolute path so apptainer can find it without fakeroot
-    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/spikenv411_env.tar.gz /tmp/spikenv411_env.tar.gz
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/spikenv411_env.tar.gz /opt/spikenv411_env.tar.gz
 
 %post
     mkdir -p /opt/spikenv411
-    tar -xzf /tmp/spikenv411_env.tar.gz -C /opt/spikenv411
-    rm /tmp/spikenv411_env.tar.gz
+    tar -xzf /opt/spikenv411_env.tar.gz -C /opt/spikenv411
+    rm /opt/spikenv411_env.tar.gz
     # Fix any hardcoded paths from the original env location
     /opt/spikenv411/bin/conda-unpack
 

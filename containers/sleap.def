@@ -16,12 +16,12 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
 
 %files
     # Absolute path so apptainer can find it without fakeroot
-    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz /tmp/sleap_env.tar.gz
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz /opt/sleap_env.tar.gz
 
 %post
     mkdir -p /opt/sleap
-    tar -xzf /tmp/sleap_env.tar.gz -C /opt/sleap
-    rm /tmp/sleap_env.tar.gz
+    tar -xzf /opt/sleap_env.tar.gz -C /opt/sleap
+    rm /opt/sleap_env.tar.gz
     # Fix any hardcoded paths from the original env location
     /opt/sleap/bin/conda-unpack
 
