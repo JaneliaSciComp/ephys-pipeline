@@ -26,7 +26,8 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
     tar -xzf /opt/spikenv411_env.tar.gz -C /opt/spikenv411 --no-same-owner
     rm /opt/spikenv411_env.tar.gz
     # Fix any hardcoded paths from the original env location
-    /opt/spikenv411/bin/conda-unpack
+    export PATH=/opt/spikenv411/bin:$PATH
+    conda-unpack
 
 %environment
     export PATH=/opt/spikenv411/bin:$PATH

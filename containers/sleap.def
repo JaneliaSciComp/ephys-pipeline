@@ -23,7 +23,8 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
     tar -xzf /opt/sleap_env.tar.gz -C /opt/sleap --no-same-owner
     rm /opt/sleap_env.tar.gz
     # Fix any hardcoded paths from the original env location
-    /opt/sleap/bin/conda-unpack
+    export PATH=/opt/sleap/bin:$PATH
+    conda-unpack
 
 %environment
     export PATH=/opt/sleap/bin:$PATH
