@@ -15,14 +15,7 @@ INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/square_are
 OUTPUT_DIR="./sleap_output"
 INPUT_DIR="./data"
 
-# Activate conda env without needing conda on PATH
-export CONDA_PREFIX="$(dirname "$SLEAP_ENV_BIN")"
-export PATH="$SLEAP_ENV_BIN:$PATH"
-for f in "$CONDA_PREFIX/etc/conda/activate.d"/*.sh; do [ -f "$f" ] && source "$f"; done
-
 mkdir -p "$OUTPUT_DIR"
-
-chmod -R 777 "$OUTPUT_DIR"
 
 for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
     base_name=$(basename "$mp4_file" .mp4)

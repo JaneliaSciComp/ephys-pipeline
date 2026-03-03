@@ -42,7 +42,7 @@ for probe in a b; do
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         bash -lc "PATH='$ENV_BIN:\$PATH' python -u '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
+         bash -lc "'$ENV_BIN/python' -u '$SCRIPT_DIR/run_pipeline.py' '$DAY_DIR' '$probe' '$shank_num'"
   done
 done
 
