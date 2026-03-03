@@ -2,11 +2,15 @@
 """Run the full spike-sorting pipeline for one probe/shank."""
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
+# sys.executable may be a symlink back to base conda Python; use sys.prefix to
+# get the active env root and construct the real interpreter path.
+PYTHON = os.path.join(sys.prefix, "bin", "python")
 
 
 def run(cmd):
@@ -20,9 +24,9 @@ def main():
     parser.add_argument("shank", choices=["0", "1", "2", "3"])
     args = parser.parse_args()
 
-    run([sys.executable, "-u", "run_shank.py", args.data_dir, args.probe, args.shank])
-    run([sys.executable, "postproc.py", args.data_dir, args.probe, args.shank])
-    run([sys.executable, "extract_unitmatch_data.py",
+    run([PYTHON, "-u", "run_shank.py", args.data_dir, args.probe, args.shank])
+    run([PYTHON, "postproc.py", args.data_dir, args.probe, args.shank])
+    run([PYTHON, "extract_unitmatch_data.py",
          "--data_dir", args.data_dir, "--probe", args.probe, "--shank", args.shank])
 
 
