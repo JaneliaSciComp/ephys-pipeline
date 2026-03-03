@@ -31,7 +31,7 @@ for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
         echo "Output file $output_path already exists. Skipping..."
         continue
     fi
-    apptainer exec --nv "$SLEAP_SIF" sleap-track \
+    apptainer exec --nv --bind /groups "$SLEAP_SIF" sleap-track \
         "$mp4_file" \
         -m "$CENTROID_MODEL" \
         -m "$INSTANCE_MODEL" \
@@ -41,7 +41,7 @@ for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
         --max_instances 1
 
     echo "Converting $output_path to $analysis_path..."
-    apptainer exec --nv "$SLEAP_SIF" sleap-convert \
+    apptainer exec --nv --bind /groups "$SLEAP_SIF" sleap-convert \
         "$output_path" \
         --format analysis \
         -o "$analysis_path"

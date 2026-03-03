@@ -43,7 +43,7 @@ for probe in a b; do
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         apptainer exec --nv "$SPIKENV_SIF" \
+         apptainer exec --nv --bind /groups "$SPIKENV_SIF" \
              python "$SCRIPT_DIR/run_pipeline.py" "$DAY_DIR" "$probe" "$shank_num"
   done
 done
