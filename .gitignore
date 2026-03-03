@@ -185,3 +185,5 @@ scripts/
 test/
 
 ./submit_postproc.sh
+
+envs/

@@ -15,10 +15,10 @@ submit_a_day.sh <day_directory>
 
 ## Usage
 
-### Submitting a full day
+### Submitting a full day on cluster
 
 ```bash
-bash submit_a_day.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+bash /groups/voigts/voigtslab/ephys-pipeline/submit_a_day.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
 ```
 
 This expects the day directory to have a `data/` subdirectory. It will:
@@ -30,7 +30,7 @@ Output logs go to `<day_dir>/output/` and `<day_dir>/sleap_output/`.
 ### Submitting spike sorting only
 
 ```bash
-bash submit_all.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+bash /groups/voigts/voigtslab/ephys-pipeline/submit_ephys.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
 ```
 
 Submits one `bsub` job per probe (`a`, `b`) per shank (`0`–`3`), each running `run_pipeline.py`. Jobs run on `gpu_a100`, 12 cores, 4 hour wall time. You'll get an email at `$USER@janelia.hhmi.org` on completion or error.

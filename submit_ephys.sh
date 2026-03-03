@@ -20,7 +20,7 @@ fi
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
 SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
-ENV_BIN="$BASE_DIR/envs/spikenv411/bin"
+ENV_BIN="$SCRIPT_DIR/envs/spikenv411/bin"
 
 user="${USER:-$(whoami)}"
 email="${user}@janelia.hhmi.org"

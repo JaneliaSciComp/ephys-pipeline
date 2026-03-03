@@ -21,7 +21,7 @@ fi
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
 SCRIPT_DIR="$BASE_DIR/ephys-pipeline" # where submit_ephys.sh and submit_sleap.sh live
-SLEAP_ENV_BIN="$BASE_DIR/envs/sleap/bin"
+SLEAP_ENV_BIN="$SCRIPT_DIR/envs/sleap/bin"
 
 
 if [ ! -f "$SCRIPT_DIR/submit_ephys.sh" ]; then
