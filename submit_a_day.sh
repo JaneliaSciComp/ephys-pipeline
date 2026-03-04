@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <day_directory>" >&2
-  echo "Example: $0 /groups/.../2025_12_02_square_arena_02" >&2
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <day_directory> <large|box|minimaze>" >&2
+  echo "Example: $0 /groups/.../2025_12_02_square_arena_02 large" >&2
   exit 1
 fi
 
@@ -17,6 +17,15 @@ if [ ! -d "$DAY_DIR/data" ]; then
   echo "WARNING: $DAY_DIR/data not found. Exiting" >&2
   exit 2
 fi
+
+MAZE="$2"
+case "$MAZE" in
+  large|box|minimaze) ;;
+  *)
+    echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
+    exit 2
+    ;;
+esac
 
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
@@ -60,7 +69,6 @@ bsub -J "$NPX_SUBMIT_JOB_NAME" \
      -eo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.err" \
      bash -c "SPIKENV_SIF='$SPIKENV_SIF' bash '$SCRIPT_DIR/submit_ephys.sh' '$DAY_DIR'"
 
-
 # -----------------------------
 # SUBMIT SLEAP
 # -----------------------------
@@ -70,8 +78,8 @@ echo "Submitting SLEAP job: $SLEAP_JOB_NAME"
 bsub -J "$SLEAP_JOB_NAME" \
      -q gpu_a100 \
      -gpu "num=1" \
-     -n 5 \
+     -n 12 \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -c "cd '$DAY_DIR' && SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh'"
+     bash -c "cd '$DAY_DIR' && SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh' '$MAZE'"
