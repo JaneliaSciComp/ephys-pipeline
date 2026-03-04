@@ -1,0 +1,35 @@
+# Build instructions:
+#
+# Step 1 — install conda-pack into the env if needed:
+#   /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap/bin/pip install conda-pack
+#
+# Step 2 — pack the existing communal conda env (run once on the cluster):
+#   /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap/bin/conda-pack \
+#     --prefix /groups/scicompsoft/home/sheppardj/miniconda3/envs/sleap \
+#     -o /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz
+#
+# Step 3 — build the container (from the containers/ directory):
+#   apptainer build --ignore-fakeroot-command sleap.sif sleap.def
+
+
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+%files
+    # Absolute path so apptainer can find it without fakeroot
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/sleap_env.tar.gz /opt/sleap_env.tar.gz
+
+%post
+    mkdir -p /opt/sleap
+    tar -xzf /opt/sleap_env.tar.gz -C /opt/sleap --no-same-owner
+    rm /opt/sleap_env.tar.gz
+    # Fix any hardcoded paths from the original env location
+    export PATH=/opt/sleap/bin:$PATH
+    conda-unpack
+
+%environment
+    export PATH=/opt/sleap/bin:$PATH
+    export PYTHONPATH=""
+
+%runscript
+    exec /opt/sleap/bin/python "$@"

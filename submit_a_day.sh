@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <day_directory>" >&2
-  echo "Example: $0 /groups/.../2025_12_02_square_arena_02" >&2
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <day_directory> <large|box|minimaze>" >&2
+  echo "Example: $0 /groups/.../2025_12_02_square_arena_02 large" >&2
   exit 1
 fi
 
@@ -18,19 +18,36 @@ if [ ! -d "$DAY_DIR/data" ]; then
   exit 2
 fi
 
+MAZE="$2"
+case "$MAZE" in
+  large|box|minimaze) ;;
+  *)
+    echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
+    exit 2
+    ;;
+esac
+
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
-SCRIPT_DIR="$BASE_DIR/ephys-pipeline" # where submit_ephys.sh and submit_sleap.sh live
-SLEAP_ENV_BIN="$SCRIPT_DIR/envs/sleap/bin"
-
+SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
+CONTAINERS_DIR="$SCRIPT_DIR/containers"
+SPIKENV_SIF="$CONTAINERS_DIR/spikenv411.sif"
+SLEAP_SIF="$CONTAINERS_DIR/sleap.sif"
 
 if [ ! -f "$SCRIPT_DIR/submit_ephys.sh" ]; then
-  echo "ERROR: submit_ephys.sh not found next to this script: $SCRIPT_DIR/submit_ephys.sh" >&2
+  echo "ERROR: submit_ephys.sh not found: $SCRIPT_DIR/submit_ephys.sh" >&2
   exit 2
 fi
-
 if [ ! -f "$SCRIPT_DIR/submit_sleap.sh" ]; then
-  echo "ERROR: submit_sleap.sh not found next to this script: $SCRIPT_DIR/submit_sleap.sh" >&2
+  echo "ERROR: submit_sleap.sh not found: $SCRIPT_DIR/submit_sleap.sh" >&2
+  exit 2
+fi
+if [ ! -f "$SPIKENV_SIF" ]; then
+  echo "ERROR: spikenv411.sif not found: $SPIKENV_SIF" >&2
+  exit 2
+fi
+if [ ! -f "$SLEAP_SIF" ]; then
+  echo "ERROR: sleap.sif not found: $SLEAP_SIF" >&2
   exit 2
 fi
 
@@ -50,8 +67,7 @@ bsub -J "$NPX_SUBMIT_JOB_NAME" \
      -R "rusage[mem=2000]" \
      -oo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/output/${NPX_SUBMIT_JOB_NAME}.%J.err" \
-     bash -c "cd '$SCRIPT_DIR' && bash '$SCRIPT_DIR/submit_ephys.sh' '$DAY_DIR'"
-
+     bash -c "SPIKENV_SIF='$SPIKENV_SIF' bash '$SCRIPT_DIR/submit_ephys.sh' '$DAY_DIR'"
 
 # -----------------------------
 # SUBMIT SLEAP
@@ -62,8 +78,8 @@ echo "Submitting SLEAP job: $SLEAP_JOB_NAME"
 bsub -J "$SLEAP_JOB_NAME" \
      -q gpu_a100 \
      -gpu "num=1" \
-     -n 5 \
+     -n 12 \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -c "unset PYTHONPATH; cd '$DAY_DIR' && SLEAP_ENV_BIN='$SLEAP_ENV_BIN' bash '$SCRIPT_DIR/submit_sleap.sh'"
+     bash -c "cd '$DAY_DIR' && SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh' '$MAZE'"
