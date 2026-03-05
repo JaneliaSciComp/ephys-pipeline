@@ -8,8 +8,8 @@ case "$MAZE" in
     INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/251205_164053.centered_instance.n=2228"
     ;;
   box)
-    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/square_arena251217_163935.centroid.n=60"
-    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/square_arena251217_170608.centered_instance.n=60"
+    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_124156.centroid.n=169"
+    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_130544.centered_instance.n=169"
     ;;
   minimaze)
     CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze251217_172518.centroid.n=62"

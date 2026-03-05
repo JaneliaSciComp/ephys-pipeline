@@ -82,7 +82,7 @@ BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
 SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
 CONTAINERS_DIR="$SCRIPT_DIR/containers"
 COMBINER_SIF="$CONTAINERS_DIR/combiner.sif"
-COMBINER_SCRIPT="$BASE_DIR/voigts/data_loading/combiner_pipeline.py"
+COMBINER_SCRIPT="$SCRIPT_DIR/combiner_pipeline.py"
 
 if [ ! -f "$COMBINER_SIF" ]; then
   echo "ERROR: combiner.sif not found: $COMBINER_SIF" >&2
