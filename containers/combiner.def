@@ -1,0 +1,39 @@
+# Build instructions:
+#
+# Step 1 - create/update the conda env on cluster:
+#   conda create -y -p /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner python=3.11
+#   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/pip install \
+#     -r /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/combiner_requirements.txt
+#   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/pip install conda-pack
+#
+# Step 2 - pack the env (run once on cluster):
+#   /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/conda-pack \
+#     --prefix /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner \
+#     --ignore-missing-files \
+#     -o /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/combiner_env.tar.gz
+#
+# Step 3 - build the container (from containers/):
+#   apptainer build --ignore-fakeroot-command combiner.sif combiner.def
+
+Bootstrap: docker
+From: ubuntu:22.04
+
+%labels
+    Description Combiner pipeline runtime (CPU)
+
+%files
+    /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/combiner_env.tar.gz /opt/combiner_env.tar.gz
+
+%post
+    mkdir -p /opt/combiner
+    tar -xzf /opt/combiner_env.tar.gz -C /opt/combiner --no-same-owner
+    rm /opt/combiner_env.tar.gz
+    export PATH=/opt/combiner/bin:$PATH
+    conda-unpack
+
+%environment
+    export PATH=/opt/combiner/bin:$PATH
+    export PYTHONPATH=""
+
+%runscript
+    exec /opt/combiner/bin/python "$@"
