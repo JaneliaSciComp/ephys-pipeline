@@ -4,3 +4,4 @@ pyarrow==17.0.0
 h5py==3.11.0
 matplotlib==3.9.2
 opencv-python-headless==4.10.0.84
+scipy==1.13.1

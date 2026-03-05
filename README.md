@@ -1,143 +1,100 @@
+
 # Ephys Pipeline
 
-Scripts for spike sorting and pose estimation for neuropixels recordings. The cluster copy lives at:
-
-`/groups/voigts/voigtslab/submit_a_day/ephys-pipeline`
+Scripts for spike sorting and pose estimation for neuropixels recordings. The repo lives on the cluster at `/groups/voigts/voigtslab/submit_a_day/ephys-pipeline` and is what gets called when you submit a day.
 
 ## Workflow Overview
 
-`submit_a_day.sh` is the top-level entrypoint and now chains a combiner job automatically.
+The typical entry point is `submit_a_day.sh`, which submits both the Kilosort spike sorting and SLEAP pose estimation jobs for a full recording day.
 
-```text
-submit_a_day.sh <day_directory> <large|box|minimaze>
-  ├── submit_ephys.sh                    → submits 8 Kilosort jobs (LSF)
-  ├── submit_sleap.sh                    → submits 1 SLEAP job (LSF)
-  └── submit_combiner.sh --wait "<expr>" → submits 1 combiner job (LSF dependency)
 ```
-
-The combiner job is submitted with an LSF dependency expression:
-
-`done(<ks_job_1>) && done(<ks_job_2>) && ... && done(<sleap_job>)`
-
-That means combiner stays pending until all upstream jobs finish successfully.
+submit_a_day.sh <day_directory>
+  ├── submit_all.sh     → bsub jobs per probe/shank (Kilosort, GPU a100)
+  └── submit_sleap.sh   → bsub job for pose tracking (GPU l4)
+```
 
 ## Usage
 
-### Submit full day (KS + SLEAP + automatic combiner)
+### Submitting a full day on cluster
 
 ```bash
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_a_day.sh \
-  /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02 \
-  large
+bash /groups/voigts/voigtslab/ephys-pipeline/submit_a_day.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
 ```
 
-This submits:
-1. 8 Kilosort jobs (`submit_ephys.sh`)
-2. 1 SLEAP job (`submit_sleap.sh`)
-3. 1 combiner job (`submit_combiner.sh`) with `done(...)` dependency on all of the above
+This expects the day directory to have a `data/` subdirectory. It will:
+1. Submit 8 Kilosort jobs (probes a/b × shanks 0–3) via `submit_all.sh`
+2. Submit a SLEAP tracking job via `submit_sleap.sh`
 
-`submit_a_day.sh` prints all parsed job IDs for traceability.
+Output logs go to `<day_dir>/output/` and `<day_dir>/sleap_output/`.
 
-### Submit spike sorting only
+### Submitting spike sorting only
 
 ```bash
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_ephys.sh \
-  /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+bash /groups/voigts/voigtslab/ephys-pipeline/submit_ephys.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
 ```
 
-Optional machine-readable IDs:
+Submits one `bsub` job per probe (`a`, `b`) per shank (`0`–`3`), each running `run_pipeline.py`. Jobs run on `gpu_a100`, 12 cores, 4 hour wall time. You'll get an email at `$USER@janelia.hhmi.org` on completion or error.
 
-```bash
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_ephys.sh \
-  --emit-job-ids \
-  /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
-```
-
-### Submit SLEAP only
+### Submitting SLEAP only
 
 ```bash
 cd <day_directory>
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh <large|box|minimaze>
+bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh
 ```
 
-### Submit combiner only (manual recovery)
-
-```bash
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_combiner.sh \
-  /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02 \
-  --workers 16
-```
-
-If you need to wait on explicit upstream jobs:
-
-```bash
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_combiner.sh \
-  /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02 \
-  --workers 16 \
-  --wait "done(12345) && done(12346)"
-```
-
-## Combiner Container Setup
-
-The combiner runs in `containers/combiner.sif` and executes:
-
-`python /groups/voigts/voigtslab/submit_a_day/voigts/data_loading/combiner_pipeline.py <day_dir> --workers 16 --plot true`
-
-### 1) Create and pack the env on cluster
-
-```bash
-conda create -y -p /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner python=3.11
-/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/pip install \
-  -r /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/combiner_requirements.txt
-/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/pip install conda-pack
-
-/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner/bin/conda-pack \
-  --prefix /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/combiner \
-  --ignore-missing-files \
-  -o /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers/combiner_env.tar.gz
-```
-
-### 2) Build `combiner.sif`
-
-```bash
-cd /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/containers
-apptainer build --ignore-fakeroot-command combiner.sif combiner.def
-```
-
-## Monitoring
-
-```bash
-bjobs -J "ks_*"
-bjobs -J "sleap_*"
-bjobs -J "combiner_*"
-```
-
-Combiner should show as `PEND` until all dependency jobs are `DONE`.
+Tracks all `data/compressed*.mp4` files using the square arena SLEAP models. Output `.slp` and `.analysis.h5` files go to `sleap_output/`. To use a different arena model (big maze, minimaze), edit the model paths at the top of `submit_sleap.sh`.
 
 ## Repository Structure
 
-```text
+```
 ephys-pipeline/
-├── submit_a_day.sh
-├── submit_ephys.sh
-├── submit_sleap.sh
-├── submit_combiner.sh
-├── run_pipeline.py
-├── run_shank.py
-├── postproc.py
-└── containers/
-    ├── spikenv411.def
-    ├── sleap.def
-    ├── combiner.def
-    └── combiner_requirements.txt
+├── submit_a_day.sh      # top-level entry point: submits KS + SLEAP for a day
+├── submit_all.sh        # submits per-shank Kilosort jobs
+├── submit_sleap.sh      # submits SLEAP tracking job
+├── submit_postproc.sh   # post-processing submission
+├── run_pipeline.py      # per-shank Kilosort pipeline (called by submit_all.sh)
+├── run_shank.py         # single-shank runner
+├── postproc.py          # post-processing
+├── probe_utils.py       # probe geometry utilities
+├── sorting_env.yml      # conda environment spec
+└── ...
 ```
 
-## Notes
+## Environment
 
-- All submit scripts use `set -euo pipefail` and fail fast on missing inputs/tools/files.
-- Job ID parsing is strict. If `bsub` output cannot be parsed, scripts exit with an error.
-- Combiner defaults:
-  - workers: `16`
-  - plot: `true`
-  - dependency policy: success-only (`done(jobid)`)
-  - queue: cluster default unless `COMBINER_QUEUE` is set
+The spike sorting environment lives at:
+```
+/groups/voigts/voigtslab/submit_a_day/envs/spikenv411/
+```
+
+The SLEAP environment lives at:
+```
+/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/sleap/
+```
+
+To recreate the spike sorting environment locally:
+```bash
+conda env create -f sorting_env.yml
+```
+
+Kilosort 4.1.1 is recommended.
+
+## Cluster Notes
+
+- Jobs run on the Janelia LSF cluster via `bsub`
+- Spike sorting: `gpu_a100` queue, 1 GPU, 12 cores, 4 hr wall time
+- SLEAP: `gpu_l4` queue, 1 GPU, 5 cores, 36 hr wall time
+- The submitter job itself runs on the `short` queue (30 min, 1 core)
+
+### First-time setup / permissions
+
+If scripts aren't executable after cloning:
+```bash
+chmod +x submit_a_day.sh submit_all.sh submit_sleap.sh submit_postproc.sh
+chmod +x run_pipeline.py run_shank.py postproc.py
+```
+
+If you see Windows line endings causing issues on Linux:
+```bash
+dos2unix submit_a_day.sh submit_all.sh submit_sleap.sh
+```
