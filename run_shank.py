@@ -201,11 +201,8 @@ if __name__ == "__main__":
     #total_recording[str(shank_num)] = total_recording[str(shank_num)].set_probe(shank_probe)
 
     print("Saving shank recording...")
-    try:
-        print(time.time())
-        start_time = time.time()
-    except:
-        pass
+    print(time.time())
+    start_time = time.time()
 
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
         shank_recording, shank_folder, data_name=f'shank_recording.bin', dtype=np.int16,
@@ -213,10 +210,9 @@ if __name__ == "__main__":
         max_workers=12
         )
     print(f"Saved binary recording to {filename}")
-    try:
-        print(f"duration {time.time() - start_time}")
-    except:
-        pass
+    
+    print(f"duration {time.time() - start_time}")
+
     
     # Specify probe configuration.
     assert probe_path is not None, 'No probe information exported by SpikeInterface'
