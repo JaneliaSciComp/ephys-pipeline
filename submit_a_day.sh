@@ -2,10 +2,10 @@
 set -euo pipefail
 
 usage() {
-  cat <<EOF
+  cat <<USAGE
 Usage: $0 <day_directory> <large|box|minimaze>
 Example: $0 /groups/.../2025_12_02_square_arena_02 large
-EOF
+USAGE
 }
 
 if [ $# -ne 2 ]; then
@@ -105,23 +105,15 @@ done
 # SUBMIT SLEAP
 # -----------------------------
 mkdir -p "$DAY_DIR/sleap_output"
-SLEAP_JOB_NAME="sleap_${DIR_NAME}"
-echo "Submitting SLEAP job: $SLEAP_JOB_NAME"
-sleap_submit_output="$(bsub -J "$SLEAP_JOB_NAME" \
-     -q gpu_a100 \
-     -gpu "num=1" \
-     -W 8:00 \
-     -n 12 \
-     -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
-     -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
-     -W 36:00 \
-     bash -c "SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh' '$DAY_DIR' '$MAZE'")"
+echo "Submitting SLEAP job via submit_sleap.sh"
+sleap_submit_output="$(SLEAP_SIF="$SLEAP_SIF" bash "$SCRIPT_DIR/submit_sleap.sh" "$DAY_DIR" "$MAZE")"
 printf '%s\n' "$sleap_submit_output"
 
-sleap_job_id="$(extract_job_id "$sleap_submit_output")" || {
-  echo "ERROR: Failed to parse LSF job ID from SLEAP submission output." >&2
+sleap_job_id="$(printf '%s\n' "$sleap_submit_output" | awk -F= '/^SLEAP_JOB_ID=/{print $2}' | tail -n 1)"
+if ! [[ "${sleap_job_id:-}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: Failed to parse SLEAP_JOB_ID from submit_sleap.sh output." >&2
   exit 3
-}
+fi
 
 dependency_expr=""
 for job_id in "${ks_job_ids[@]}" "$sleap_job_id"; do

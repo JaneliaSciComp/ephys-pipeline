@@ -30,19 +30,12 @@ bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_ephys.sh \
   /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
 ```
 
-### SLEAP only (independent mode)
+### SLEAP only (submit mode)
 
 ```bash
 bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh \
   /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02 \
   large
-```
-
-Legacy mode (run from inside the day directory) is still supported:
-
-```bash
-cd /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh large
 ```
 
 ### Combiner only
@@ -97,11 +90,15 @@ So combiner remains `PEND` until all required upstream jobs finish successfully.
 
 ### `submit_sleap.sh`
 
-- Supports both:
-  - `submit_sleap.sh <day_dir> [maze]`
-  - legacy: `submit_sleap.sh [maze]` from inside day dir
-- Uses models keyed by maze type: `large`, `box`, `minimaze`.
-- Produces `.slp` and `.analysis.h5` outputs in `<day_dir>/sleap_output`.
+- Submit-only script: schedules one SLEAP LSF job for a day/maze.
+- Interface: `submit_sleap.sh <day_dir> <large|box|minimaze>`.
+- Emits machine-readable `SLEAP_JOB_ID=<id>`.
+
+### `run_sleap.sh`
+
+- Internal SLEAP runner invoked by `submit_sleap.sh` inside the LSF job.
+- Runs `sleap-track` and `sleap-convert` over `data/compressed*.mp4`.
+- Writes outputs to `<day_dir>/sleap_output`.
 
 ### `submit_combiner.sh`
 
@@ -157,7 +154,7 @@ Combiner should stay pending until dependencies are `DONE`.
 ### If one Kilosort job fails
 
 - The dependency expression uses `done(jobid)`, so combiner will not run.
-- Re-submit failed shank(s), then re-submit combiner with updated wait expression, or submit combiner directly when outputs are ready.
+- Re-submit failed shank(s), submit combiner directly when outputs are ready.
 
 ## Environment
 
@@ -182,6 +179,7 @@ ephys-pipeline/
 ├── submit_a_day.sh
 ├── submit_ephys.sh
 ├── submit_sleap.sh
+├── run_sleap.sh
 ├── submit_combiner.sh
 ├── run_pipeline.py
 ├── run_shank.py
@@ -198,7 +196,7 @@ ephys-pipeline/
 ## Cluster Notes
 
 - Jobs run on Janelia LSF via `bsub`.
-- Ephys shank jobs: `gpu_l4`, 1 GPU, 8 CPU cores, 4 hour wall time.
+- Ephys shank jobs: `gpu_l4`, 1 GPU, 8 CPU cores, 8 hour wall time.
 - SLEAP day job: `gpu_a100`, 1 GPU, 12 CPU cores, 36 hour wall time.
 - Combiner queue defaults to cluster default unless `COMBINER_QUEUE` is set.
 
@@ -207,14 +205,14 @@ ephys-pipeline/
 If scripts are not executable after cloning:
 
 ```bash
-chmod +x submit_a_day.sh submit_ephys.sh submit_sleap.sh submit_combiner.sh
+chmod +x submit_a_day.sh submit_ephys.sh submit_sleap.sh run_sleap.sh submit_combiner.sh
 chmod +x run_pipeline.py run_shank.py postproc.py
 ```
 
 If you hit Windows line-ending issues on Linux:
 
 ```bash
-dos2unix submit_a_day.sh submit_ephys.sh submit_sleap.sh submit_combiner.sh
+dos2unix submit_a_day.sh submit_ephys.sh submit_sleap.sh run_sleap.sh submit_combiner.sh
 ```
 
 ## Reliability Notes
