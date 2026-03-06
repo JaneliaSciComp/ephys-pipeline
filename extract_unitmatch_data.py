@@ -55,7 +55,6 @@ class UnitDataExtractor:
         
         # Recording parameters
         self.n_channels = 96
-        self.n_elements = 60 * 60 * 30000 * self.n_channels * 8
         
         # Waveform extraction parameters
         self.samples_before = 20
@@ -84,8 +83,8 @@ class UnitDataExtractor:
         if not self.data_path.exists():
             raise FileNotFoundError(f"Recording data not found: {self.data_path}")
         
-        self.data = np.memmap(self.data_path, dtype='int16', 
-                             shape=(int(self.n_elements / self.n_channels), self.n_channels))
+        n_samples = self.data_path.stat().st_size // (self.n_channels * np.dtype('int16').itemsize)
+        self.data = np.memmap(self.data_path, dtype='int16', shape=(n_samples, self.n_channels))
         
         # Load KiloSort4 output
         self.clu = np.load(self.ks_dir / 'spike_clusters.npy')
