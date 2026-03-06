@@ -1,70 +1,95 @@
+#!/usr/bin/env bash
 set -euo pipefail
 
-MAZE="${1:-large}"
+usage() {
+  cat <<USAGE
+Usage: $0 <day_directory> <large|box|minimaze>
+Example: $0 /groups/.../2025_12_02_square_arena_02 large
+USAGE
+}
+
+if [ $# -ne 2 ]; then
+  usage >&2
+  exit 1
+fi
+
+DAY_DIR="$1"
+MAZE="$2"
+
+if [ ! -d "$DAY_DIR" ]; then
+  echo "ERROR: Day directory does not exist: $DAY_DIR" >&2
+  exit 2
+fi
+if [ ! -d "$DAY_DIR/data" ]; then
+  echo "ERROR: Missing data directory: $DAY_DIR/data" >&2
+  exit 2
+fi
 
 case "$MAZE" in
-  large)
-    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/251205_150146.centroid.n=2228"
-    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/251205_164053.centered_instance.n=2228"
-    ;;
-  box)
-    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/square_arena251217_163935.centroid.n=60"
-    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/square_arena251217_170608.centered_instance.n=60"
-    ;;
-  minimaze)
-    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze251217_172518.centroid.n=62"
-    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze251217_174931.centered_instance.n=62"
-    ;;
-  -h|--help)
-    echo "Usage: $0 [large|box|minimaze]"
-    echo "Defaults to 'large' if omitted."
-    exit 0
-    ;;
+  large|box|minimaze) ;;
   *)
-    echo "Error: invalid maze '$MAZE'"
-    echo "Usage: $0 [large|box|minimaze]"
+    echo "ERROR: invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
     exit 2
     ;;
 esac
 
-OUTPUT_DIR="./sleap_output"
-INPUT_DIR="./data"
+if ! command -v bsub >/dev/null 2>&1; then
+  echo "ERROR: 'bsub' command not found in PATH." >&2
+  exit 2
+fi
+if ! command -v apptainer >/dev/null 2>&1; then
+  echo "ERROR: 'apptainer' command not found in PATH." >&2
+  exit 2
+fi
 
-# SLEAP_SIF is passed in from submit_a_day.sh via the environment
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
-: "${SLEAP_SIF:="$BASE_DIR/ephys-pipeline/containers/sleap.sif"}"
+SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
+RUNNER_SCRIPT="$SCRIPT_DIR/run_sleap.sh"
+: "${SLEAP_SIF:="$SCRIPT_DIR/containers/sleap.sif"}"
 
-mkdir -p "$OUTPUT_DIR"
+if [ ! -f "$RUNNER_SCRIPT" ]; then
+  echo "ERROR: run_sleap.sh not found: $RUNNER_SCRIPT" >&2
+  exit 2
+fi
+if [ ! -f "$SLEAP_SIF" ]; then
+  echo "ERROR: sleap.sif not found: $SLEAP_SIF" >&2
+  exit 2
+fi
 
-for mp4_file in "$INPUT_DIR"/compressed*.mp4; do
-    base_name=$(basename "$mp4_file" .mp4)
-    output_path="$OUTPUT_DIR/${base_name}.slp"
-    analysis_path="$OUTPUT_DIR/${base_name}.analysis.h5"
+extract_job_id() {
+  local bsub_output="$1"
+  if [[ "$bsub_output" =~ Job[[:space:]]*\<([0-9]+)\> ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
 
-    echo "Processing $mp4_file..."
-    if [ -f "$output_path" ]; then
-        echo "Output file $output_path already exists. Skipping..."
-        continue
-    fi
-    apptainer exec --nv --bind /groups \
-        --env LD_LIBRARY_PATH=/opt/sleap/lib \
-        "$SLEAP_SIF" sleap-track \
-        "$mp4_file" \
-        -m "$CENTROID_MODEL" \
-        -m "$INSTANCE_MODEL" \
-        -o "$output_path" \
-        --verbosity json \
-        --batch_size 8 \
-        --max_instances 1
+DIR_NAME="$(basename "$DAY_DIR")"
+LOG_DIR="$DAY_DIR/sleap_output"
+mkdir -p "$LOG_DIR"
 
-    echo "Converting $output_path to $analysis_path..."
-    apptainer exec --nv --bind /groups \
-        --env LD_LIBRARY_PATH=/opt/sleap/lib \
-        "$SLEAP_SIF" sleap-convert \
-        "$output_path" \
-        --format analysis \
-        -o "$analysis_path"
-done
+SLEAP_QUEUE="${SLEAP_QUEUE:-gpu_a100}"
+SLEAP_CORES="${SLEAP_CORES:-12}"
+SLEAP_WALLTIME="${SLEAP_WALLTIME:-36:00}"
+SLEAP_GPU="${SLEAP_GPU:-1}"
 
-echo "changing permissions on output directory..."
-chmod -R 777 "$OUTPUT_DIR"
+JOB_NAME="sleap_${DIR_NAME}"
+echo "Submitting SLEAP job: $JOB_NAME"
+submit_output="$(bsub -J "$JOB_NAME" \
+    -q "$SLEAP_QUEUE" \
+    -gpu "num=${SLEAP_GPU}" \
+    -n "$SLEAP_CORES" \
+    -W "$SLEAP_WALLTIME" \
+    -oo "$LOG_DIR/${JOB_NAME}.%J.out" \
+    -eo "$LOG_DIR/${JOB_NAME}.%J.err" \
+    bash -c "SLEAP_SIF='$SLEAP_SIF' bash '$RUNNER_SCRIPT' '$DAY_DIR' '$MAZE'")"
+
+printf '%s\n' "$submit_output"
+
+sleap_job_id="$(extract_job_id "$submit_output")" || {
+  echo "ERROR: Failed to parse LSF job ID from SLEAP submission output." >&2
+  exit 3
+}
+
+echo "SLEAP_JOB_ID=$sleap_job_id"
