@@ -1,100 +1,112 @@
 
 # Ephys Pipeline
 
-Scripts for spike sorting and pose estimation for neuropixels recordings. The repo lives on the cluster at `/groups/voigts/voigtslab/submit_a_day/ephys-pipeline` and is what gets called when you submit a day.
+Scripts for spike sorting and pose estimation for Neuropixels recordings. Designed for use on an HPC cluster with GPU nodes and [Apptainer](https://apptainer.org/) containers, using the [IBM LSF](https://www.ibm.com/docs/en/spectrum-lsf) job scheduler (`bsub`).
 
 ## Workflow Overview
 
-The typical entry point is `submit_a_day.sh`, which submits both the Kilosort spike sorting and SLEAP pose estimation jobs for a full recording day.
+The typical entry point is `submit_a_day.sh`, which submits both Kilosort spike sorting and SLEAP pose estimation for a full recording day.
 
 ```
-submit_a_day.sh <day_directory>
-  ├── submit_all.sh     → bsub jobs per probe/shank (Kilosort, GPU a100)
-  └── submit_sleap.sh   → bsub job for pose tracking (GPU l4)
+submit_a_day.sh <day_directory> <maze>
+  ├── submit_ephys.sh  → one bsub job per probe/shank (Kilosort)
+  └── submit_sleap.sh  → one bsub job for pose tracking
 ```
+
+Each Kilosort job runs `run_pipeline.py`, which calls three stages in sequence:
+1. `run_shank.py` — preprocessing and Kilosort 4
+2. `postproc.py` — UnitRefine SUA/MUA and noise/neural classification
+3. `extract_unitmatch_data.py` — raw waveform extraction for UnitMatch
 
 ## Usage
 
-### Submitting a full day on cluster
+### Submit everything for a day
 
 ```bash
-bash /groups/voigts/voigtslab/ephys-pipeline/submit_a_day.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+bash /path/to/ephys-pipeline/submit_a_day.sh <day_directory> <large|box|minimaze>
 ```
 
-This expects the day directory to have a `data/` subdirectory. It will:
-1. Submit 8 Kilosort jobs (probes a/b × shanks 0–3) via `submit_all.sh`
-2. Submit a SLEAP tracking job via `submit_sleap.sh`
+The second argument selects the SLEAP pose estimation model by arena type. The day directory must contain a `data/` subdirectory. Output logs go to `<day_dir>/output/` and `<day_dir>/sleap_output/`.
 
-Output logs go to `<day_dir>/output/` and `<day_dir>/sleap_output/`.
-
-### Submitting spike sorting only
+### Submit spike sorting only
 
 ```bash
-bash /groups/voigts/voigtslab/ephys-pipeline/submit_ephys.sh /groups/voigts/voigtslab/neuropixels_2025/npx08/2025_12_02_square_arena_02
+bash /path/to/ephys-pipeline/submit_ephys.sh <day_directory>
 ```
 
-Submits one `bsub` job per probe (`a`, `b`) per shank (`0`–`3`), each running `run_pipeline.py`. Jobs run on `gpu_a100`, 12 cores, 4 hour wall time. You'll get an email at `$USER@janelia.hhmi.org` on completion or error.
+Submits one `bsub` job per probe (`a`, `b`) × shank (`0`–`3`), each running `run_pipeline.py`.
 
-### Submitting SLEAP only
+### Submit SLEAP only
 
 ```bash
 cd <day_directory>
-bash /groups/voigts/voigtslab/submit_a_day/ephys-pipeline/submit_sleap.sh
+bash /path/to/ephys-pipeline/submit_sleap.sh <large|box|minimaze>
 ```
 
-Tracks all `data/compressed*.mp4` files using the square arena SLEAP models. Output `.slp` and `.analysis.h5` files go to `sleap_output/`. To use a different arena model (big maze, minimaze), edit the model paths at the top of `submit_sleap.sh`.
+Tracks all `data/compressed*.mp4` files and writes `.slp` and `.analysis.h5` files to `sleap_output/`.
+
+### Check pipeline completion
+
+```bash
+python check_unit_labels.py <day_directory>
+```
+
+Reports which shanks have finished post-processing (i.e. have `unit_labels.tsv`).
 
 ## Repository Structure
 
 ```
 ephys-pipeline/
-├── submit_a_day.sh      # top-level entry point: submits KS + SLEAP for a day
-├── submit_all.sh        # submits per-shank Kilosort jobs
-├── submit_sleap.sh      # submits SLEAP tracking job
-├── submit_postproc.sh   # post-processing submission
-├── run_pipeline.py      # per-shank Kilosort pipeline (called by submit_all.sh)
-├── run_shank.py         # single-shank runner
-├── postproc.py          # post-processing
-├── probe_utils.py       # probe geometry utilities
-├── sorting_env.yml      # conda environment spec
-└── ...
+├── submit_a_day.sh            # top-level entry point: submits KS + SLEAP for a day
+├── submit_ephys.sh            # submits per-shank Kilosort jobs
+├── submit_sleap.sh            # submits SLEAP tracking job
+├── run_pipeline.py            # per-shank pipeline orchestrator (called by submit_ephys.sh)
+├── run_shank.py               # stage 1: preprocessing + Kilosort 4
+├── postproc.py                # stage 2: UnitRefine classification
+├── extract_unitmatch_data.py  # stage 3: raw waveform extraction for UnitMatch
+├── check/
+│   └── check_unit_labels.py   # utility: check pipeline completion for a day
+├── pipeline/
+│   ├── probe_utils.py         # probe config loading
+│   └── get_artifacts.py       # saturation artifact detection
+├── containers/
+│   ├── spikenv411.def         # Apptainer definition for spike sorting env
+│   └── sleap.def              # Apptainer definition for SLEAP env
+└── sorting_env.yml            # conda environment spec
 ```
 
 ## Environment
 
-The spike sorting environment lives at:
-```
-/groups/voigts/voigtslab/submit_a_day/envs/spikenv411/
+Pre-built Apptainer containers (`.sif` files) are required to run the pipeline on the cluster. Build them from the `.def` files in `containers/`:
+
+```bash
+apptainer build containers/spikenv411.sif containers/spikenv411.def
+apptainer build containers/sleap.sif containers/sleap.def
 ```
 
-The SLEAP environment lives at:
-```
-/groups/voigts/voigtslab/submit_a_day/ephys-pipeline/envs/sleap/
-```
-
-To recreate the spike sorting environment locally:
+To recreate the spike sorting environment locally with conda instead:
 ```bash
 conda env create -f sorting_env.yml
 ```
 
-Kilosort 4.1.1 is recommended.
-
 ## Cluster Notes
 
-- Jobs run on the Janelia LSF cluster via `bsub`
-- Spike sorting: `gpu_a100` queue, 1 GPU, 12 cores, 4 hr wall time
-- SLEAP: `gpu_l4` queue, 1 GPU, 5 cores, 36 hr wall time
-- The submitter job itself runs on the `short` queue (30 min, 1 core)
+The submission scripts are written for [IBM LSF](https://www.ibm.com/docs/en/spectrum-lsf) (`bsub`) and will need to be adapted for other schedulers (SLURM, PBS, etc.). Hardcoded cluster paths in the scripts will also need to be updated for your site.
 
-### First-time setup / permissions
+| Task | Cores | GPU | Wall time |
+|---|---|---|---|
+| KS submitter | 1 | — | 30 min |
+| Spike sorting (per shank) | 8 | 1 | 4 hr |
+| SLEAP tracking | 12 | 1 | 36 hr |
+
+### First-time setup
 
 If scripts aren't executable after cloning:
 ```bash
-chmod +x submit_a_day.sh submit_all.sh submit_sleap.sh submit_postproc.sh
-chmod +x run_pipeline.py run_shank.py postproc.py
+chmod +x submit_a_day.sh submit_ephys.sh submit_sleap.sh
 ```
 
-If you see Windows line endings causing issues on Linux:
+If you see Windows line ending issues on Linux:
 ```bash
-dos2unix submit_a_day.sh submit_all.sh submit_sleap.sh
+dos2unix submit_a_day.sh submit_ephys.sh submit_sleap.sh
 ```

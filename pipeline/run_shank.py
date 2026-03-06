@@ -15,8 +15,8 @@ import probeinterface as pi
 from kilosort import io
 from kilosort import run_kilosort
 import time
-from get_artifacts import detect_saturation_periods
-from probe_utils import load_probe
+from pipeline.get_artifacts import detect_saturation_periods
+from pipeline.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
@@ -198,10 +198,7 @@ if __name__ == "__main__":
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
-    #total_recording[str(shank_num)] = total_recording[str(shank_num)].set_probe(shank_probe)
-
     print("Saving shank recording...")
-    print(time.time())
     start_time = time.time()
 
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
@@ -234,14 +231,5 @@ if __name__ == "__main__":
 
     
     print("done sorting.")
-    try:
-        print(time.time())
-    except:
-        pass
 
-    print(f"setting permissions recursively: chmod -R 777 {output_folder}")
-    try:
-        os.system(f"chmod -R 777 '{output_folder}'")
-        print("chmod complete")
-    except Exception as e:
-        print("chmod failed:", e)
+    os.system(f"chmod -R 777 '{output_folder}'")

@@ -38,7 +38,7 @@ for probe in a b; do
     bsub -J "$JOB_NAME" \
          -n 8 \
          -gpu "num=1" \
-         -q gpu_l4 \
+         -q gpu_a100 \
          -W 4:00 \
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \

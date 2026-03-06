@@ -23,8 +23,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Union
 from joblib import Parallel, delayed
 from scipy.ndimage import gaussian_filter
-import warnings
-warnings.filterwarnings('ignore')
 
 class UnitDataExtractor:
     """Extract and process unit data from KiloSort4 output.
