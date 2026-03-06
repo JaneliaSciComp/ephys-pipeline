@@ -14,7 +14,7 @@ import spikeinterface as si
 import spikeinterface.extractors as se
 import spikeinterface.curation as sc
 import probeinterface as pi
-from probe_utils import load_probe
+from pipeline.probe_utils import load_probe
 
 # Constants
 SAMPLE_RATE = 30000
@@ -308,6 +308,3 @@ if __name__ == "__main__":
     save_results(sorting_analyzer, all_labels, shank_folder, models_to_run=models_to_run)
     
     print(f"\nPost-processing complete for {probe} shank {shank_num}!")
-
-
-#python postproc.py /groups/voigts/voigtslab/neuropixels_2025/npx10/2025_12_18_large_maze/ a 0
