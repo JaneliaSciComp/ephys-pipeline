@@ -110,11 +110,12 @@ echo "Submitting SLEAP job: $SLEAP_JOB_NAME"
 sleap_submit_output="$(bsub -J "$SLEAP_JOB_NAME" \
      -q gpu_a100 \
      -gpu "num=1" \
+     -W 8:00 \
      -n 12 \
      -oo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.out" \
      -eo "$DAY_DIR/sleap_output/${SLEAP_JOB_NAME}.%J.err" \
      -W 36:00 \
-     bash -c "cd '$DAY_DIR' && SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh' '$MAZE'")"
+     bash -c "SLEAP_SIF='$SLEAP_SIF' bash '$SCRIPT_DIR/submit_sleap.sh' '$DAY_DIR' '$MAZE'")"
 printf '%s\n' "$sleap_submit_output"
 
 sleap_job_id="$(extract_job_id "$sleap_submit_output")" || {
