@@ -187,4 +187,6 @@ test/
 ./submit_postproc.sh
 
 envs/
+
 *.sif
+*.tar.gz
