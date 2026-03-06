@@ -190,3 +190,4 @@ envs/
 
 *.sif
 *.tar.gz
+.DS_Store
