@@ -21,9 +21,9 @@ def main():
     parser.add_argument("shank", choices=["0", "1", "2", "3"])
     args = parser.parse_args()
 
-    run([PYTHON, "-u", "run_shank.py", args.data_dir, args.probe, args.shank])
-    run([PYTHON, "postproc.py", args.data_dir, args.probe, args.shank])
-    run([PYTHON, "extract_unitmatch_data.py",
+    run([PYTHON, "-u", str(SCRIPT_DIR / "pipeline" / "run_shank.py"), args.data_dir, args.probe, args.shank])
+    run([PYTHON, str(SCRIPT_DIR / "pipeline" / "postproc.py"), args.data_dir, args.probe, args.shank])
+    run([PYTHON, str(SCRIPT_DIR / "pipeline" / "extract_unitmatch_data.py"),
          "--data_dir", args.data_dir, "--probe", args.probe, "--shank", args.shank])
 
 
