@@ -546,14 +546,17 @@ class  DataLoader:
 
         neural_enabled = False
         neural_items: List[Any] = []
+        valid_kilosort = [ks for ks in kilosort if ks is not None]
 
         if self._expected("neural"):
+            if len(valid_kilosort) == 0:
+                raise ValueError("Neural expected but no valid kilosort datasets were loaded.")
             neural_enabled = True
-            neural_items = kilosort
+            neural_items = valid_kilosort
         else:
-            if len(kilosort) > 0:
+            if len(valid_kilosort) > 0:
                 neural_enabled = True
-                neural_items = kilosort
+                neural_items = valid_kilosort
 
         self.processing_plan = ProcessingPlan(
             pose=PosePlan(enabled=pose_enabled, source=pose_source, pairs=pose_pairs),
