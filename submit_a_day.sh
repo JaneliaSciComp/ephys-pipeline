@@ -2,10 +2,10 @@
 set -euo pipefail
 
 usage() {
-  cat <<USAGE
+  cat <<EOF
 Usage: $0 <day_directory> <large|box|minimaze>
-Example: $0 /groups/.../2025_12_02_square_arena_02 large
-USAGE
+Example: $0 /data/2025_12_02_square_arena_02 large
+EOF
 }
 
 if [ $# -ne 2 ]; then
@@ -19,7 +19,7 @@ if [ ! -d "$DAY_DIR" ]; then
   exit 2
 fi
 if [ ! -d "$DAY_DIR/data" ]; then
-  echo "WARNING: $DAY_DIR/data not found. Exiting" >&2
+  echo "ERROR: Data directory not found: $DAY_DIR/data" >&2
   exit 2
 fi
 

@@ -10,11 +10,11 @@ SCRIPT_DIR = Path(__file__).parent
 PYTHON = sys.executable
 
 
-def run(cmd):
+def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, cwd=SCRIPT_DIR)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("data_dir")
     parser.add_argument("probe", choices=["a", "b"])

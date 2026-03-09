@@ -20,7 +20,11 @@ from utils.probe_utils import load_probe
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
 
-def load_recording_and_sorting(shank_folder, probe, n_channels_shank):
+def load_recording_and_sorting(
+    shank_folder: Path,
+    probe: pi.Probe,
+    n_channels_shank: int,
+) -> tuple[si.BaseRecording, si.BaseSorting]:
     """
     Load recording and sorting from run_shank.py output.
     
@@ -57,7 +61,7 @@ def load_recording_and_sorting(shank_folder, probe, n_channels_shank):
     
     return recording, sorting
 
-def load_sorting_analyzer(analyzer_path):
+def load_sorting_analyzer(analyzer_path: Path) -> si.SortingAnalyzer:
     """
     Load an existing SortingAnalyzer from disk.
     
@@ -81,7 +85,11 @@ def load_sorting_analyzer(analyzer_path):
     
     return sorting_analyzer
 
-def compute_sorting_analyzer(recording, sorting, n_jobs=12):
+def compute_sorting_analyzer(
+    recording: si.BaseRecording,
+    sorting: si.BaseSorting,
+    n_jobs: int = 12,
+) -> si.SortingAnalyzer:
     """
     Create SortingAnalyzer and compute all required extensions.
     
@@ -124,7 +132,7 @@ def compute_sorting_analyzer(recording, sorting, n_jobs=12):
     
     return sorting_analyzer
 
-def save_unitrefine_dataset(sorting_analyzer, shank_folder):
+def save_unitrefine_dataset(sorting_analyzer: si.SortingAnalyzer, shank_folder: Path) -> None:
     """
     Save the feature dataset that is provided to the UnitRefine model.
     
@@ -146,7 +154,10 @@ def save_unitrefine_dataset(sorting_analyzer, shank_folder):
     print(f"\nSaving UnitRefine input dataset to {dataset_path}")
     features_df.to_csv(dataset_path, sep='\t', index=True)
 
-def apply_unitrefine_classification(sorting_analyzer, model_repo_id=None):
+def apply_unitrefine_classification(
+    sorting_analyzer: si.SortingAnalyzer,
+    model_repo_id: str | None = None,
+) -> tuple[pd.DataFrame, dict]:
     """
     Apply UnitRefine model to classify units.
     
@@ -185,7 +196,12 @@ def apply_unitrefine_classification(sorting_analyzer, model_repo_id=None):
 
     return labels, model_info
 
-def save_results(sorting_analyzer, all_labels_df, shank_folder, models_to_run=None):
+def save_results(
+    sorting_analyzer: si.SortingAnalyzer,
+    all_labels_df: pd.DataFrame,
+    shank_folder: Path,
+    models_to_run: list[str] | None = None,
+) -> None:
     """
     Save sorting analyzer and labels to disk.
     
@@ -233,19 +249,18 @@ def save_results(sorting_analyzer, all_labels_df, shank_folder, models_to_run=No
     print("Post-processing complete!")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: postproc.py <folder> <probe> <shank_num>")
-        print("  folder: Base folder containing data and output directories")
-        print("  probe: Probe name (e.g., 'a', 'b')")
-        print("  shank_num: Shank number (e.g., 1, 2, 3, 4)")
-        print("\nThis script runs two models:")
-        print("  - SpikeInterface/UnitRefine_sua_mua_classifier_lightweight")
-        print("  - SpikeInterface/UnitRefine_noise_neural_classifier_lightweight")
-        sys.exit(1)
-    
-    folder = Path(sys.argv[1])
-    probe = sys.argv[2]
-    shank_num = sys.argv[3]
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Post-process spike sorting output and apply UnitRefine classification."
+    )
+    parser.add_argument("folder", type=Path, help="Base folder containing data and output directories.")
+    parser.add_argument("probe", choices=["a", "b"], help="Probe letter.")
+    parser.add_argument("shank_num", choices=["0", "1", "2", "3"], help="Shank number.")
+    args = parser.parse_args()
+
+    folder = args.folder
+    probe = args.probe
+    shank_num = args.shank_num
     
     # Define models to run
     models_to_run = [
@@ -275,10 +290,6 @@ if __name__ == "__main__":
         sys.exit(1)
     
     print(f"Number of channels in shank: {n_channels_shank}")
-    
-    # Check if sorting analyzer already exists
-    # SpikeInterface saves as .zarr directory, so check for that
-    analyzer_path = shank_folder / 'kilosort4' / 'sorting_analyzer'
     
     # Load recording and sorting
     recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)

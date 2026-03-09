@@ -12,7 +12,7 @@ Based on the original get_units.ipynb notebook, but rewritten for reusability.
 
 Usage:
     python extract_unit_data.py --data_dir /path/to/data --probe a --shank 0
-    python extract_unit_data.py --data_dir '/groups/voigts/voigtslab/neuropixels_2025/npx10/2025_12_18_large_maze' --probe a --shank 0 --n_jobs 16 --verbose 10
+    python extract_unit_data.py --data_dir /path/to/data --probe a --shank 0 --n_jobs 16 --verbose 10
     python extract_unit_data.py --all_probes --data_dir /path/to/data
 """
 
@@ -59,8 +59,7 @@ class UnitDataExtractor:
         self.spike_width = 61
         self.samples_after = self.spike_width - self.samples_before
         self.half_width = int(np.floor(self.spike_width / 2))
-        #self.time_window = 30000 * 60 * 5  # 5 minutes in samples
-        
+
         # Quality control parameters
         self.max_samples = 5000
         self.min_samples = 100

@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<EOF
 Usage: $0 [--emit-job-ids] <day_directory>
-Example: $0 /groups/.../2025_12_02_square_arena_02
+Example: $0 /data/2025_12_02_square_arena_02
 EOF
 }
 
@@ -43,7 +43,7 @@ if [ ! -d "$DAY_DIR" ]; then
   exit 2
 fi
 if [ ! -d "$DAY_DIR/data" ]; then
-  echo "WARNING: $DAY_DIR/data not found. Exiting" >&2
+  echo "ERROR: Data directory not found: $DAY_DIR/data" >&2
   exit 2
 fi
 if ! command -v bsub >/dev/null 2>&1; then
@@ -62,7 +62,7 @@ SCRIPT_DIR="$BASE_DIR/ephys-pipeline"
 : "${SPIKENV_SIF:="$SCRIPT_DIR/containers/spikenv411.sif"}"
 
 user="${USER:-$(whoami)}"
-email="${user}@janelia.hhmi.org"
+email="${CLUSTER_EMAIL:-${user}@${CLUSTER_DOMAIN:-}}"
 job_ids=()
 
 extract_job_id() {
@@ -93,7 +93,7 @@ for probe in a b; do
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
          apptainer exec --nv --bind /groups "$SPIKENV_SIF" \
              python "$SCRIPT_DIR/run_pipeline.py" "$DAY_DIR" "$probe" "$shank_num")"
-    echo "$submit_output"
+    printf '%s\n' "$submit_output"
 
     job_id="$(extract_job_id "$submit_output")" || {
       echo "ERROR: Failed to parse LSF job ID from bsub output for $JOB_NAME" >&2

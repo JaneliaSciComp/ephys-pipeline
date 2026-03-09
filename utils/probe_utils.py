@@ -11,20 +11,24 @@ import numpy as np
 import probeinterface as pi
 
 
-def find_active_channels(probe_dict):
+def find_active_channels(probe_dict: dict) -> np.ndarray:
     """Find active channels in probe configuration."""
     dev_ind = np.array(probe_dict['probes'][0]["device_channel_indices"])
     return dev_ind != -1
 
 
-def find_shank_channels(probe_dict, shank_num):
+def find_shank_channels(probe_dict: dict, shank_num: int | str) -> np.ndarray:
     """Find channels belonging to a specific shank."""
     shank_ind = np.array(probe_dict["shank_ids"])
     shank_num_str = str(shank_num)
     return np.array([str(s) == shank_num_str for s in shank_ind])
 
 
-def load_probe(probe_file, shank_num=None, n_channels_shank=None):
+def load_probe(
+    probe_file: str | Path,
+    shank_num: int | str | None = None,
+    n_channels_shank: int | None = None,
+) -> tuple[pi.Probe, int | None]:
     """
     Load probe configuration from JSON file.
     
