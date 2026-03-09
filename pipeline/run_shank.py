@@ -15,8 +15,8 @@ import probeinterface as pi
 from kilosort import io
 from kilosort import run_kilosort
 import time
-from pipeline.get_artifacts import detect_saturation_periods
-from pipeline.probe_utils import load_probe
+from utils.get_artifacts import detect_saturation_periods
+from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384

@@ -14,7 +14,7 @@ import spikeinterface as si
 import spikeinterface.extractors as se
 import spikeinterface.curation as sc
 import probeinterface as pi
-from pipeline.probe_utils import load_probe
+from utils.probe_utils import load_probe
 
 # Constants
 SAMPLE_RATE = 30000
