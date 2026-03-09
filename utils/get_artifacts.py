@@ -1,13 +1,6 @@
-from __future__ import annotations
-
 import numpy as np
 from typing import List, Optional
 
-try:
-    from tqdm.auto import tqdm
-    HAVE_TQDM = True
-except ImportError:
-    HAVE_TQDM = False
 
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
