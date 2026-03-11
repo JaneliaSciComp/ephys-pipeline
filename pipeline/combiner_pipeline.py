@@ -1328,9 +1328,11 @@ class DataProcessor:
         big_jumps = jump_groups_dict[base_keypoint]
         smooth_jumps = smooth_jump_groups_dict[base_keypoint]
         
-        if plot:
+        if plot and np.array(big_jumps+smooth_jumps).flatten().size > 15:
             self.plot_groups_w_video_combiner(big_jumps + smooth_jumps, [init_kp, clean_kp], video_path, plotlen=15, max_plots=9, random=True) 
             self.plot_orig_clean_and_jumps(init_kp, clean_kp, jump_groups_dict, smooth_jump_groups_dict, base_keypoint)
+        else:
+            print('data was clean, no bad stuff to plot :) ') if self.verbose else None
         return full_df
 
 

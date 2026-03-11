@@ -10,6 +10,8 @@ import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 import spikeinterface as si
 import spikeinterface.extractors as se
 import spikeinterface.curation as sc

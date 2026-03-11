@@ -9,6 +9,8 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import numpy as np
 import probeinterface as pi
 import spikeinterface.curation as sc

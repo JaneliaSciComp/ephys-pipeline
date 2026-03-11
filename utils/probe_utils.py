@@ -6,6 +6,8 @@ This module provides common functions for loading and processing probe configura
 from JSON files, including filtering by active channels and shank numbers.
 """
 
+from __future__ import annotations
+
 import json
 import numpy as np
 import probeinterface as pi
