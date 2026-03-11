@@ -86,8 +86,8 @@ for probe in a b; do
     submit_output="$(bsub -J "$JOB_NAME" \
          -n 8 \
          -gpu "num=1" \
-         -q gpu_l4 \
-         -W 8:00 \
+         -q gpu_a100 \
+         -W 12:00 \
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \

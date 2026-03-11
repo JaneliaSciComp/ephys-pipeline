@@ -546,14 +546,17 @@ class  DataLoader:
 
         neural_enabled = False
         neural_items: List[Any] = []
+        valid_kilosort = [ks for ks in kilosort if ks is not None]
 
         if self._expected("neural"):
+            if len(valid_kilosort) == 0:
+                raise ValueError("Neural expected but no valid kilosort datasets were loaded.")
             neural_enabled = True
-            neural_items = kilosort
+            neural_items = valid_kilosort
         else:
-            if len(kilosort) > 0:
+            if len(valid_kilosort) > 0:
                 neural_enabled = True
-                neural_items = kilosort
+                neural_items = valid_kilosort
 
         self.processing_plan = ProcessingPlan(
             pose=PosePlan(enabled=pose_enabled, source=pose_source, pairs=pose_pairs),
@@ -1324,10 +1327,12 @@ class DataProcessor:
 
         big_jumps = jump_groups_dict[base_keypoint]
         smooth_jumps = smooth_jump_groups_dict[base_keypoint]
-        
-        if plot:
+
+        if plot and np.array(big_jumps+smooth_jumps).flatten().size > 15:
             self.plot_groups_w_video_combiner(big_jumps + smooth_jumps, [init_kp, clean_kp], video_path, plotlen=15, max_plots=9, random=True) 
             self.plot_orig_clean_and_jumps(init_kp, clean_kp, jump_groups_dict, smooth_jump_groups_dict, base_keypoint)
+        else:
+            print('data was clean, no bad stuff to plot :) ') if self.verbose else None
         return full_df
 
 

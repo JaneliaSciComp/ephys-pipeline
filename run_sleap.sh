@@ -29,17 +29,14 @@ case "$MAZE" in
     # this one works!
     CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/251205_150146.centroid.n=2228"
     INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/251205_164053.centered_instance.n=2228"
-    # testing new one: doesnt really work..
-    # CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_152533.centroid.n=2228"
-    # INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_163925.centered_instance.n=2228"
     ;;
   box)
     CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_124156.centroid.n=169"
     INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/260305_130544.centered_instance.n=169"
     ;;
   minimaze)
-    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze251217_172518.centroid.n=62"
-    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze251217_174931.centered_instance.n=62"
+    CENTROID_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze260309_152049.centroid.n=272"
+    INSTANCE_MODEL="/groups/voigts/voigtslab/animal_tracking/sleap/models/minimaze260309_155101.centered_instance.n=272"
     ;;
   *)
     echo "ERROR: invalid maze '$MAZE'" >&2
