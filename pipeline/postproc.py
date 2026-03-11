@@ -4,6 +4,8 @@ Post-processing script for spike sorting results.
 Takes the output of run_shank.py and performs UnitRefine classification.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import json

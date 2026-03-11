@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import cv2
 from datetime import datetime
 import json

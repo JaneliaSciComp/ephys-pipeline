@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Spike sorting pipeline for a single probe/shank using Kilosort4."""
 
+from __future__ import annotations
+
 import glob
 import json
 import os
