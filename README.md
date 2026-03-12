@@ -1,6 +1,58 @@
 # Ephys Pipeline
 
-Scripts for spike sorting and pose estimation for Neuropixels recordings. Runs on an LSF cluster via `bsub`.
+An end-to-end pipeline for spike sorting and pose estimation of Neuropixels recordings acquired with the OpenEphys system. Jobs are submitted to an LSF cluster via `bsub`.
+
+---
+
+## Features
+
+| | |
+|---|---|
+| **Spike sorting** | Kilosort4 with SpikeInterface preprocessing, run independently per shank |
+| **Artifact removal** | Curated cleaning for motion artifacts in freely behaving animals |
+| **Unit curation** | UnitRefine labels units as SUA, MUA, or noise automatically |
+| **Unit tracking** | Waveforms exported in UnitMatch format for cross-session matching |
+| **Pose estimation** | SLEAP extracts animal pose trajectories from synchronized video |
+| **Multimodal fusion** | Neural, pose, and BNO (IMU) data aligned to a single Parquet file |
+| **Cluster execution** | LSF job submission via `bsub` with automatic dependency management |
+
+---
+
+## How It Works
+
+```
+  .raw .prb files (neural)           .mp4 files (video)      .csv /.raw files (BNO + NP clock)
+        │                                  │                                │
+        ▼                                  ▼                                │
+  ┌─────────────────────────┐    ┌──────────────────────┐                   │
+  │   Ephys  (per shank,    │    │        SLEAP         │                   │
+  │   run in parallel)      │    │                      │                   │
+  │                         │    │  1. Pose estimation  │                   │
+  │  1. Preproc (SI)        │    │     on video frames  │                   │
+  │  2. Artifact removal    │    │                      │                   │
+  │  3. Kilosort4           │    └──────────┬───────────┘                   │
+  │  4. Quality metrics     │               │                               │
+  │  5. UnitRefine curation │               │                               │
+  │  6. Waveform export     │               │                               │
+  │     (UnitMatch format)  │               │                               │
+  └───────────┬─────────────┘               │                               │
+              │                             │                               │
+              └─────────────────────────────┬───────────────────────────────┘ 
+                                            │               
+                                            ▼
+                            ┌──────────────────────────────┐
+                            │           Combiner           │
+                            │                              │
+                            │  Synchronise all streams     │
+                            │  using NP clock timestamps   │
+                            │                              │
+                            │  Neural + Pose + BNO (IMU)   │
+                            └──────────────┬───────────────┘
+                                           │
+                                           ▼
+                              processed_data-<timestamp>/
+                              final_df_<recording_id>.parquet
+```
 
 ## Prerequisites
 
@@ -8,9 +60,25 @@ Scripts for spike sorting and pose estimation for Neuropixels recordings. Runs o
 - [Apptainer](https://apptainer.org) (for container builds) **or** conda
 - NVIDIA GPU with CUDA 11.8+ support
 
+---
+
+## Inputs Required
+
+Before running, make sure you have the following for each recording day:
+
+| Input | Description |
+|-------|-------------|
+| `.bin` files | Binary neural data from OpenEphys, one per probe/shank |
+| Probe file | Probe geometry file (`.prb` or equivalent) |
+| `.mp4` files | Behavioural video files for SLEAP pose estimation |
+| `.csv` files (BNO) | IMU data capturing head orientation and movement |
+| `.raw` files (NP clock) | Neuropixels clock timestamps for synchronisation |
+
+---
+
 ## Setup
 
-Clone the repo, then `cd` into it. All commands below use `$REPO` and `$ENVS` which are set from your current directory — no paths to fill in.
+Clone the repo and set two shell variables used throughout these instructions — no manual paths needed.
 
 ```bash
 git clone https://github.com/JaneliaSciComp/ephys-pipeline.git
@@ -21,9 +89,9 @@ ENVS=$REPO/envs
 
 ### Option A: Apptainer containers (recommended)
 
-Each container needs a packed conda env first, then an Apptainer build. Run once per container.
+Containers isolate each pipeline stage and are the most reproducible option. Each one requires a packed conda environment followed by an Apptainer build — run these once.
 
-**Spike-sorting (`spikenv411.sif`)**
+**Spike sorting (`spikenv411.sif`)**
 
 ```bash
 conda create -y -p $ENVS/spikenv411 python=3.11
@@ -64,6 +132,8 @@ cd $REPO/containers && apptainer build --ignore-fakeroot-command combiner.sif co
 
 ### Option B: Conda environments only
 
+If Apptainer is unavailable, environments can be used directly:
+
 ```bash
 # Spike sorting
 conda env create -f $REPO/sorting_env.yml
@@ -85,92 +155,103 @@ chmod +x $REPO/submit_a_day.sh $REPO/submit_ephys.sh $REPO/submit_sleap.sh \
          $REPO/run_sleap.sh $REPO/submit_combiner.sh
 ```
 
+---
+
 ## Usage
 
-### Full pipeline (Kilosort + SLEAP + combiner)
+### Run the full pipeline
+
+This is the normal entry point. It submits spike sorting, SLEAP, and the combiner in one go, with the combiner automatically held until the other jobs finish.
 
 ```bash
 bash $REPO/submit_a_day.sh <day_directory> <large|box|minimaze>
 ```
 
-### Ephys (Kilosort) only
+The arena argument (`large`, `box`, or `minimaze`) selects the SLEAP model to use.
+
+### Run individual stages
+
+You can also submit each stage independently:
 
 ```bash
+# Spike sorting (Kilosort4) only
 bash $REPO/submit_ephys.sh <day_directory>
-```
 
-### SLEAP only
-
-```bash
+# SLEAP only
 bash $REPO/submit_sleap.sh <day_directory> <large|box|minimaze>
-```
 
-### Combiner only
-
-```bash
+# Combiner only
 bash $REPO/submit_combiner.sh <day_directory> --workers 16
-```
 
-With explicit job dependency:
-
-```bash
+# Combiner with an explicit LSF job dependency
 bash $REPO/submit_combiner.sh <day_directory> --workers 16 --wait "done(12345) && done(12346)"
 ```
 
-## How It Works
+---
 
-`submit_a_day.sh` orchestrates the full pipeline:
 
-```
-submit_a_day.sh <day_directory> <large|box|minimaze>
-  ├── submit_ephys.sh                    → 8 Kilosort jobs (one per probe/shank)
-  ├── submit_sleap.sh                    → 1 SLEAP job
-  └── submit_combiner.sh --wait "<expr>" → 1 combiner job, held until above finish
-```
-
-The combiner uses an LSF dependency expression so it stays `PEND` until all upstream jobs are `DONE`:
+`submit_a_day.sh` submits all three stages and wires them together via LSF job dependencies — the combiner stays `PEND` until every upstream job succeeds:
 
 ```
 done(<ks_job_1>) && done(<ks_job_2>) && ... && done(<sleap_job>)
 ```
 
+---
+
 ## Monitoring and Recovery
 
+Check job status by name:
+
 ```bash
-bjobs -J "ks_*"
-bjobs -J "sleap_*"
-bjobs -J "combiner_*"
+bjobs -J "ks_*"       # spike sorting jobs
+bjobs -J "sleap_*"    # SLEAP job
+bjobs -J "combiner_*" # combiner job
 ```
 
-If a Kilosort job fails, the combiner will not run. Re-submit the failed shank(s), then submit the combiner directly once outputs are ready.
+**If a Kilosort job fails:** the combiner will not run (LSF dependency is not met). Fix the issue, re-submit only the failed shank(s) using `submit_ephys.sh`, then submit the combiner manually once all shank outputs are present.
 
-## Repository Structure
+
+## Output Structure
+
+### Spike sorting (per shank)
+
+Written to `<day_directory>/output/<probe>/shank_<N>/kilosort4/`:
 
 ```
-ephys-pipeline/
-├── submit_a_day.sh         # full pipeline orchestrator
-├── submit_ephys.sh         # submits Kilosort jobs
-├── submit_sleap.sh         # submits SLEAP job
-├── run_sleap.sh            # SLEAP runner (called inside LSF job)
-├── submit_combiner.sh      # submits combiner job
-├── run_pipeline.py         # per-shank pipeline entry point
-├── run_shank.py            # shank-level spike sorting
-├── postproc.py             # post-processing
-├── probe_utils.py          # probe/shank utilities
-├── sorting_env.yml         # conda env spec for spike sorting
-└── containers/
-    ├── spikenv411.def       # Apptainer def for spike sorting
-    ├── sleap.def            # Apptainer def for SLEAP
-    ├── combiner.def         # Apptainer def for combiner
-    └── combiner_requirements.txt
+kilosort4/
+├── spike_times.npy               # spike times for all clusters
+├── spike_clusters.npy            # cluster assignment per spike
+├── amplitudes.npy                # spike amplitudes
+├── spike_positions.npy           # spike positions on probe
+├── cluster_KSLabel.tsv           # Kilosort quality labels
+├── sorting_analyzer.zarr/        # SpikeInterface SortingAnalyzer with computed extensions
+├── unitrefine_input_metrics.tsv  # quality + template metrics fed to UnitRefine
+├── unit_labels.tsv               # UnitRefine predictions (SUA / MUA / noise)
+└── RawWaveforms/
+    ├── Unit0_RawSpikes.npy       # median waveform per unit (shape: 61 × 96 channels × 2 halves)
+    ├── Unit1_RawSpikes.npy
+    └── ...
 ```
 
-## Cluster Resource Defaults
+If a shank has no usable spikes, a `NO_GOOD_SPIKES` sentinel file is written and that shank is skipped by the combiner.
 
-| Job | GPUs | CPUs | Wall time |
-|-----|------|------|-----------|
-| Kilosort (per shank) | 1 | 8 | 8 h |
-| SLEAP | 1 | 12 | 36 h |
-| Combiner | — | 16 | cluster default |
+### Combiner
 
-Combiner queue can be overridden with env vars: `COMBINER_QUEUE`, `COMBINER_WALLTIME`, `COMBINER_MEM_MB`.
+Written to `<day_directory>/processed_data-<YYYY_MM_DD_HH_MM_SS>/`:
+
+```
+processed_data-<timestamp>/
+├── final_df_<recording_id>.parquet      # aligned neural + pose + BNO data
+├── neural_labels_<recording_id>.parquet # SUA / MUA / noise unit classifications
+├── metadata.json                        # recording_id, data masks, loader config, data paths
+├── process_<recording_name>.log         # processing log with timestamps
+├── data_existence_over_time.png         # temporal availability of each data modality
+├── pose_cleaner_QC.png                  # pose cleaning QC plot
+├── pose_cleaner_QC_jumps.png            # jump-artifact QC plot
+└── raw_data/                            # pre-processing intermediates (if save_raw=True)
+    ├── raw_pose_<index>.parquet
+    ├── raw_bno_<index>.parquet
+    └── raw_neural_<dataset_name>.parquet
+```
+
+The output directory is timestamped to avoid overwriting previous runs. `recording_id` is derived from the last two components of the input path joined with `_`.
