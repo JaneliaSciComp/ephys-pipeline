@@ -213,7 +213,7 @@ dependencies:
       - pyqtgraph==0.12.0
       - rsa==4.9
       - probeinterface==0.2.24
-      - spikeinterface==0.103.2
+      - spikeinterface==0.104.0
       - numba==0.60.0
       - kilosort==4.1.1
       - pandas==2.2.3
