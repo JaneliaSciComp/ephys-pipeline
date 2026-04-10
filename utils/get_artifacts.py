@@ -1,7 +1,6 @@
 import numpy as np
 from typing import List, Optional
 
-from spikeinterface.core import BasePreprocessor, BasePreprocessorSegment
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
     ensure_chunk_size,
@@ -183,95 +182,19 @@ def detect_saturation_periods(
     return list_periods
 
 
-def _merge_intervals(intervals):
-    """Merge a sorted list of (start, end) tuples into non-overlapping intervals."""
-    if not intervals:
-        return []
-    intervals = sorted(intervals)
-    merged = [list(intervals[0])]
-    for start, end in intervals[1:]:
-        if start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    return [tuple(iv) for iv in merged]
-
-
-class _RemoveSaturationSegment(BasePreprocessorSegment):
-    def __init__(self, recording_segment, intervals):
-        BasePreprocessorSegment.__init__(self, recording_segment)
-        # intervals: sorted, non-overlapping list of (start, end) tuples
-        self.intervals = intervals
-
-    def get_traces(self, start_frame, end_frame, channel_indices):
-        traces = self.recording_segment.get_traces(start_frame, end_frame, channel_indices)
-        traces = traces.copy()
-        for ivl_start, ivl_end in self.intervals:
-            overlap_start = max(ivl_start, start_frame)
-            overlap_end = min(ivl_end, end_frame)
-            if overlap_start < overlap_end:
-                traces[overlap_start - start_frame : overlap_end - start_frame, :] = 0
-        return traces
-
-
-class RemoveSaturationRecording(BasePreprocessor):
-    """
-    Zeros out saturation periods (plus optional padding) in a recording.
-
-    Unlike si.remove_artifacts, this correctly handles variable-length events:
-    the entire interval [start - ms_before, end + ms_after] is zeroed for each
-    detected period, regardless of how long the saturation lasts.
-    Overlapping expanded intervals are merged before blanking.
-    """
-
-    name = "remove_saturation"
-
-    def __init__(self, recording, list_periods, ms_before=10.0, ms_after=10.0):
-        fs = recording.get_sampling_frequency()
-        samples_before = int(ms_before * fs / 1000)
-        samples_after = int(ms_after * fs / 1000)
-
-        expanded_periods = []
-        for seg_idx in range(recording.get_num_segments()):
-            seg = list_periods[seg_idx] if seg_idx < len(list_periods) else []
-            n_frames = recording.get_num_frames(segment_index=seg_idx)
-            intervals = []
-            for i in range(0, len(seg), 2):
-                start = max(0, seg[i] - samples_before)
-                end = min(n_frames, seg[i + 1] + samples_after)
-                intervals.append((start, end))
-            expanded_periods.append(_merge_intervals(intervals))
-
-        BasePreprocessor.__init__(self, recording)
-        for seg_idx in range(recording.get_num_segments()):
-            self.add_recording_segment(
-                _RemoveSaturationSegment(
-                    recording._recording_segments[seg_idx],
-                    expanded_periods[seg_idx],
-                )
-            )
-
-        self._kwargs = dict(
-            recording=recording,
-            list_periods=list_periods,
-            ms_before=ms_before,
-            ms_after=ms_after,
-        )
-
-
 def remove_saturation_artifacts(
     recording,
     list_periods: List[List[int]],
     ms_before: float = 10.0,
     ms_after: float = 10.0,
-) -> RemoveSaturationRecording:
+):
     """
     Zero out saturation periods in a recording, including pre/post padding.
 
-    Each detected period [start, end] is expanded to
-    [start - ms_before, end + ms_after] and the entire interval is set to zero.
-    Overlapping expanded intervals are merged. Variable-length events are handled
-    correctly regardless of duration.
+    Each detected period [start, end] is fully blanked by generating trigger
+    points at overlapping intervals throughout the period, so the entire
+    event is zeroed regardless of duration. Uses si.remove_artifacts internally
+    and is compatible with all spikeinterface versions.
 
     Parameters
     ----------
@@ -287,7 +210,32 @@ def remove_saturation_artifacts(
 
     Returns
     -------
-    RemoveSaturationRecording
+    RecordingExtractor
         A lazy RecordingExtractor with saturation periods zeroed out.
     """
-    return RemoveSaturationRecording(recording, list_periods, ms_before, ms_after)
+    import spikeinterface.full as si
+
+    fs = recording.get_sampling_frequency()
+    window_samples = int((ms_before + ms_after) * fs / 1000)
+    # Step slightly less than the window so adjacent triggers always overlap
+    step_samples = max(1, window_samples - 1)
+
+    dense_triggers = []
+    for seg in list_periods:
+        triggers = []
+        for i in range(0, len(seg), 2):
+            start, end = seg[i], seg[i + 1]
+            # Anchor at start then step through the period until end is covered
+            points = list(range(start, end, step_samples))
+            if not points or points[-1] < end:
+                points.append(end)
+            triggers.extend(points)
+        dense_triggers.append(triggers)
+
+    return si.remove_artifacts(
+        recording,
+        list_triggers=dense_triggers,
+        ms_before=ms_before,
+        ms_after=ms_after,
+        mode="zeros",
+    )
