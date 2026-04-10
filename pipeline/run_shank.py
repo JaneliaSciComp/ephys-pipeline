@@ -23,7 +23,7 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import detect_saturation_periods
+from utils.get_artifacts import detect_saturation_periods, remove_saturation_artifacts
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
@@ -104,12 +104,11 @@ def split_recording(
             n_jobs=12,
         )
         print(saturation_idx)
-        recording = si.remove_artifacts(
+        recording = remove_saturation_artifacts(
             recording,
-            list_triggers=saturation_idx,
+            list_periods=saturation_idx,
             ms_before=10,
             ms_after=10,
-            mode="zeros",
         )
         recordings.append(recording)
         recording_paths.append(recording_file)
