@@ -191,3 +191,6 @@ envs/
 *.sif
 *.tar.gz
 .DS_Store
+
+
+utils/fix_params_dat_path.py

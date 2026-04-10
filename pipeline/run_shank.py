@@ -6,6 +6,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -225,5 +226,17 @@ if __name__ == "__main__":
         )
 
     print("Done sorting.")
+
+    # Kilosort hardcodes the absolute path into params.py, which breaks on Windows.
+    # Rewrite dat_path to a relative path so Phy works on any OS.
+    params_py = filename.parent / 'kilosort4' / 'params.py'
+    if params_py.exists():
+        text = params_py.read_text()
+        text = re.sub(r"^dat_path\s*=.*$", "dat_path = '../shank_recording.bin'",
+                      text, flags=re.MULTILINE)
+        params_py.write_text(text)
+        print(f"Rewrote dat_path in {params_py}")
+    else:
+        print(f"WARNING: params.py not found at {params_py}, dat_path not patched")
 
     subprocess.run(["chmod", "-R", "777", str(output_folder)], check=True)
