@@ -118,7 +118,6 @@ def split_recording(
 
     total_recording = si.concatenate_recordings(recordings)
     total_recording.set_probe(global_probe_data)
-    total_recording.set_channel_locations(global_probe_data.contact_positions)
 
     total_recording = si.highpass_filter(total_recording, ftype='bessel', dtype='float32')
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
@@ -139,7 +138,8 @@ def split_recording(
         )
 
     rec = rec_split[shank_key]
-    destriped_rec = si.highpass_spatial_filter(rec, dtype='int16')
+    #destriped_rec = si.highpass_spatial_filter(rec, dtype='int16')
+    destriped_rec = si.common_reference(rec, operator="median", reference="global")
     destriped_rec = destriped_rec.set_probe(shank_probe)
 
     print(f"Detecting and interpolating over bad channels in shank {shank_num}...")
