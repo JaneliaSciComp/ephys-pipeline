@@ -96,6 +96,7 @@ def split_recording(
             print(f"Warning: {recording_file} is empty.")
             continue
 
+        print("Detecting saturation...")
         saturation_idx = detect_saturation_periods(
             recording,
             abs_threshold=3900,
@@ -104,12 +105,14 @@ def split_recording(
             n_jobs=12,
         )
         print(saturation_idx)
+        print("Removing saturation artifacts...")
         recording = remove_saturation_artifacts(
             recording,
             list_periods=saturation_idx,
-            ms_before=10,
-            ms_after=10,
+            ms_before=50,
+            ms_after=50,
         )
+        print("Done removing artifacts.")
         recordings.append(recording)
         recording_paths.append(recording_file)
 
