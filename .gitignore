@@ -194,5 +194,3 @@ envs/
 
 
 utils/fix_params_dat_path.py
-
-*.yaml

@@ -1,0 +1,23 @@
+trial_name: no_artifacts
+description: "No saturation artifact removal — baseline to check whether artifact removal is actually helping"
+
+ks_batch_size: 30000
+ks_extra_settings: {}
+n_jobs: 12
+
+pipeline:
+  - step: slice_time
+    start_time_s: 0
+    duration_s: 3600
+  - step: highpass_filter
+    ftype: bessel
+  - step: phase_shift
+  - step: split_shank
+  - step: global_cmr
+    operator: median
+  - step: detect_interpolate_bad_channels
+    methods: [coherence+psd, mad]
+  - step: local_cmr
+  - step: bandpass_filter
+    freq_min: 300.0
+    freq_max: 7500.0
