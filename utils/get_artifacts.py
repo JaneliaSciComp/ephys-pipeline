@@ -187,6 +187,7 @@ def remove_saturation_artifacts(
     list_periods: List[List[int]],
     ms_before: float = 10.0,
     ms_after: float = 10.0,
+    mode: str = "zeros",
 ):
     """
     Zero out saturation periods in a recording, including pre/post padding.
@@ -237,5 +238,5 @@ def remove_saturation_artifacts(
         list_triggers=dense_triggers,
         ms_before=ms_before,
         ms_after=ms_after,
-        mode="zeros",
+        mode=mode,
     )
