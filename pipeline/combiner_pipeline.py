@@ -303,12 +303,18 @@ class  DataLoader:
         data_dir = os.path.join(self.path, "data")
         sleap_dir = os.path.join(self.path, "sleap_output")
 
-        centroid_files = glob.glob(os.path.join(data_dir, '*centroid_absolutevalue*'))
+        start_times =  glob.glob(os.path.join(data_dir, '*start-time*'))
+        centroid_files = glob.glob(os.path.join(data_dir, '*timestamp*'))
+
+        if len(centroid_files)  == len(start_times) * 2:
+            # this means there are top_cam_timestamps as well as centroid_timestamps; we want to filter out centroid_timestamps because those also have some processing after leading to incorrect timestamps. We want to keep top_cam_timestamps
+            centroid_files = [f for f in centroid_files if 'centroid' not in f]
+
         if len(centroid_files) == 0:
             centroid_files = glob.glob(os.path.join(data_dir, '*centroid*'))
 
         all_data_paths = {
-            'npx_start_times': glob.glob(os.path.join(data_dir, '*start-time*')), 
+            'npx_start_times': start_times, 
             'npx_clocks': self.get_npx_clock_paths(), 
             'kilosort_files': self.get_kilosort_paths(), 
 
@@ -321,7 +327,7 @@ class  DataLoader:
             }
         
         self.data_paths = all_data_paths
-        return all_data_paths    
+        return all_data_paths  
 
     def get_npx_clock_paths(self,):
         npx_clocks = glob.glob(os.path.join(self.path, 'data', '*np2-*-clock*'))
@@ -346,18 +352,20 @@ class  DataLoader:
             warnings.warn('No probe directories found in the output folder.')
             return []
 
-        shank_dirs = np.array([glob.glob(os.path.join(probe_dir, '*shank*', 'kilosort4')) for probe_dir in ks_probe_dir_list], dtype=object)
-        probe_kilosort_dirs = np.array([glob.glob(os.path.join(probe_dir, 'kilosort4')) for probe_dir in ks_probe_dir_list], dtype=object)
+        shank_dirs = [glob.glob(os.path.join(probe_dir, '*shank*', 'kilosort4')) for probe_dir in ks_probe_dir_list]
+        probe_kilosort_dirs = [glob.glob(os.path.join(probe_dir, 'kilosort4')) for probe_dir in ks_probe_dir_list]
+        flat_shank_dirs = [d for probe_dirs in shank_dirs for d in probe_dirs]
+        flat_probe_kilosort_dirs = [d for probe_dirs in probe_kilosort_dirs for d in probe_dirs]
 
-        if len(shank_dirs.flatten()) > 0:
+        if len(flat_shank_dirs) > 0:
             self.sorting = 'shank'
-            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in shank_dirs.flatten().tolist()])
-            return shank_dirs.flatten().tolist()
+            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in flat_shank_dirs])
+            return flat_shank_dirs
 
-        elif len(probe_kilosort_dirs.flatten()) > 0:
+        elif len(flat_probe_kilosort_dirs) > 0:
             self.sorting = 'probe'
-            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in probe_kilosort_dirs.flatten().tolist()])
-            return probe_kilosort_dirs.flatten().tolist()
+            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in flat_probe_kilosort_dirs])
+            return flat_probe_kilosort_dirs
     
         else: 
             raise ValueError('No kilosort directories found in the output folder.')
