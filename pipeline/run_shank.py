@@ -133,8 +133,8 @@ def split_recording(
     total_recording = remove_saturation_artifacts(
         total_recording,
         list_periods=saturation_idx,
-        ms_before=10,
-        ms_after=10,
+        ms_before=50,
+        ms_after=50,
         mode="linear",
     )
     print("Done removing artifacts.")
