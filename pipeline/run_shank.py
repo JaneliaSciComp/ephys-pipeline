@@ -124,7 +124,7 @@ def split_recording(
     print("Detecting saturation artifacts...")
     saturation_idx = detect_saturation_periods(
         total_recording,
-        abs_threshold=1500,
+        abs_threshold=3900,
         direction="upper",
         chunk_size=30000 * 10,
         n_jobs=12,
