@@ -52,6 +52,7 @@ def collect_files(data_folder: Path, probe_name: str) -> list[str]:
     Returns:
         list: File paths matching the probe name.
     """
+    # todo - sort the files thoughtfully so they get concatenated appropriately in time
     recording_files = glob.glob(f"{str(data_folder)}/{probe_name}*")
     print(f"Found {len(recording_files)} files for {probe_name}")
     return recording_files
@@ -112,7 +113,20 @@ def split_recording(
         recording_paths.append(recording_file)
 
     total_recording = si.concatenate_recordings(recordings)
-    total_recording.set_probe(global_probe_data)
+
+    # try to check out channel ordering again here - not 100% but leaving to catch 
+    tmp_dev_indices = np.asarray(global_probe_data.device_channel_indices, dtype=int)
+    tmp_expected_indices = np.arange(total_recording.get_num_channels(), dtype=int)
+    if not np.array_equal(tmp_dev_indices, tmp_expected_indices):
+        raise ValueError("Check probe ordering..." \
+            f"device channel indices from global probe data: {tmp_dev_indices.tolist()}" \
+            f"expected channel indices from recording: {tmp_expected_indices.tolist()}" \
+        )
+    
+    total_recording = total_recording.set_probe(global_probe_data)
+
+    # could also try to check shank ids from global probe data here
+    # and compare it to the num chans in shank probe obj?
 
     # 1. Highpass filter and phase shift before artifact removal to avoid
     #    filter ringing at zero-padded artifact edges
@@ -155,6 +169,7 @@ def split_recording(
         )
 
     rec = rec_split[shank_key]
+    #todo - perhaps add sanity check here too that num chans makes sense and local shank indexing makes sense
     rec = rec.set_probe(shank_probe)
 
     # 3. DREDge motion correction per shank (before CMR)
