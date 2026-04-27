@@ -6,9 +6,11 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -22,11 +24,22 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import detect_saturation_periods
+from utils.get_artifacts import detect_saturation_periods, remove_saturation_artifacts
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
+
+
+def get_git_hash() -> str:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent), "rev-parse", "HEAD"],
+            capture_output=True, text=True,
+        )
+        return r.stdout.strip() if r.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
 
 
 def collect_files(data_folder: Path, probe_name: str) -> list[str]:
@@ -95,31 +108,37 @@ def split_recording(
             print(f"Warning: {recording_file} is empty.")
             continue
 
-        saturation_idx = detect_saturation_periods(
-            recording,
-            abs_threshold=3900,
-            direction="upper",
-            chunk_size=30000 * 10,
-            n_jobs=12,
-        )
-        print(saturation_idx)
-        recording = si.remove_artifacts(
-            recording,
-            list_triggers=saturation_idx,
-            ms_before=10,
-            ms_after=10,
-            mode="zeros",
-        )
         recordings.append(recording)
         recording_paths.append(recording_file)
 
     total_recording = si.concatenate_recordings(recordings)
     total_recording.set_probe(global_probe_data)
-    total_recording.set_channel_locations(global_probe_data.contact_positions)
 
+    # 1. Highpass filter and phase shift before artifact removal to avoid
+    #    filter ringing at zero-padded artifact edges
     total_recording = si.highpass_filter(total_recording, ftype='bessel', dtype='float32')
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
+
+    # 2. Artifact removal on filtered data (lower threshold, short window, linear interp)
+    print("Detecting saturation artifacts...")
+    saturation_idx = detect_saturation_periods(
+        total_recording,
+        abs_threshold=1500,
+        direction="upper",
+        chunk_size=30000 * 10,
+        n_jobs=12,
+    )
+    print(saturation_idx)
+    total_recording = remove_saturation_artifacts(
+        total_recording,
+        list_periods=saturation_idx,
+        ms_before=50,
+        ms_after=50,
+        mode="linear",
+    )
+    print("Done removing artifacts.")
+
     total_recording.set_property("group", global_probe_data.shank_ids)
 
     rec_split = total_recording.split_by("group")
@@ -136,8 +155,21 @@ def split_recording(
         )
 
     rec = rec_split[shank_key]
-    destriped_rec = si.highpass_spatial_filter(rec, dtype='int16')
-    destriped_rec = destriped_rec.set_probe(shank_probe)
+    rec = rec.set_probe(shank_probe)
+
+    # 3. DREDge motion correction per shank (before CMR)
+    print("Running DREDge motion correction...")
+    n_frames_before = rec.get_num_frames()
+    rec = spre.correct_motion(
+        rec, preset="dredge",
+        estimate_motion_kwargs={"win_step_um": 100, "win_scale_um": 100, "win_margin_um": -15},
+        n_jobs=12,
+    )
+    if rec.get_num_frames() != n_frames_before:
+        rec = rec.frame_slice(start_frame=0, end_frame=n_frames_before)
+    print("Motion correction done.")
+
+    destriped_rec = si.common_reference(rec, operator="median", reference="global")
 
     print(f"Detecting and interpolating over bad channels in shank {shank_num}...")
 
@@ -217,7 +249,7 @@ if __name__ == "__main__":
     print(shank_recording.get_total_duration())
     print("Running Kilosort...")
 
-    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000}
+    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000, 'nblocks': 0}
 
     ops, st, clu, tF, Wall, similar_templates, is_ref, \
         est_contam_rate, kept_spikes = run_kilosort(
@@ -225,5 +257,29 @@ if __name__ == "__main__":
         )
 
     print("Done sorting.")
+
+    # Kilosort hardcodes the absolute path into params.py, which breaks on Windows.
+    # Rewrite dat_path to a relative path so Phy works on any OS.
+    params_py = filename.parent / 'kilosort4' / 'params.py'
+    if params_py.exists():
+        text = params_py.read_text()
+        text = re.sub(r"^dat_path\s*=.*$", "dat_path = '../shank_recording.bin'",
+                      text, flags=re.MULTILINE)
+        params_py.write_text(text)
+        print(f"Rewrote dat_path in {params_py}")
+    else:
+        print(f"WARNING: params.py not found at {params_py}, dat_path not patched")
+
+    pipeline_info = {
+        "git_hash":       get_git_hash(),
+        "run_timestamp":  datetime.now(timezone.utc).isoformat(),
+        "day_dir":        str(folder),
+        "probe":          probe,
+        "shank_num":      shank_num,
+        "recording_files": recording_paths,
+    }
+    info_path = shank_folder / "pipeline_info.json"
+    info_path.write_text(json.dumps(pipeline_info, indent=2))
+    print(f"Saved pipeline_info.json (git: {pipeline_info['git_hash'][:8]})")
 
     subprocess.run(["chmod", "-R", "777", str(output_folder)], check=True)

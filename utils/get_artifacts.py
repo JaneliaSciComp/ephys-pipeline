@@ -1,7 +1,6 @@
 import numpy as np
 from typing import List, Optional
 
-
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
     ensure_chunk_size,
@@ -181,3 +180,63 @@ def detect_saturation_periods(
                 list_periods.append([])
     
     return list_periods
+
+
+def remove_saturation_artifacts(
+    recording,
+    list_periods: List[List[int]],
+    ms_before: float = 10.0,
+    ms_after: float = 10.0,
+    mode: str = "zeros",
+):
+    """
+    Zero out saturation periods in a recording, including pre/post padding.
+
+    Each detected period [start, end] is fully blanked by generating trigger
+    points at overlapping intervals throughout the period, so the entire
+    event is zeroed regardless of duration. Uses si.remove_artifacts internally
+    and is compatible with all spikeinterface versions.
+
+    Parameters
+    ----------
+    recording : RecordingExtractor
+        The recording to blank.
+    list_periods : list of list of int
+        Output of detect_saturation_periods: one list per segment with
+        interleaved [start1, end1, start2, end2, ...] frame indices.
+    ms_before : float, default 10.0
+        Milliseconds of padding to zero before each saturation start (ramp-up).
+    ms_after : float, default 10.0
+        Milliseconds of padding to zero after each saturation end (recovery).
+
+    Returns
+    -------
+    RecordingExtractor
+        A lazy RecordingExtractor with saturation periods zeroed out.
+    """
+    import spikeinterface.full as si
+
+    fs = recording.get_sampling_frequency()
+    window_samples = int((ms_before + ms_after) * fs / 1000)
+    # Step slightly less than the window so adjacent triggers always overlap
+    step_samples = max(1, window_samples - 1)
+
+    dense_triggers = []
+    for seg in list_periods:
+        triggers = []
+        for i in range(0, len(seg), 2):
+            start, end = seg[i], seg[i + 1]
+            # Anchor at start then step through the period until end is covered
+            points = list(range(start, end, step_samples))
+            if not points or points[-1] < end:
+                points.append(end)
+            triggers.extend(points)
+        dense_triggers.append(triggers)
+
+    return si.remove_artifacts(
+        recording,
+        list_triggers=dense_triggers,
+        ms_before=ms_before,
+        ms_after=ms_after,
+        mode=mode,
+    )

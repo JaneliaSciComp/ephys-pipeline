@@ -327,7 +327,7 @@ class  DataLoader:
             }
         
         self.data_paths = all_data_paths
-        return all_data_paths    
+        return all_data_paths  
 
     def get_npx_clock_paths(self,):
         npx_clocks = glob.glob(os.path.join(self.path, 'data', '*np2-*-clock*'))
