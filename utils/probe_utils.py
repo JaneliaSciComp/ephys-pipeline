@@ -71,6 +71,8 @@ def sort_probe_arrays_by_device_chan(probe: dict) -> None:
 
     for key in PROBE_ARRAY_KEYS:
         probe[key] = np.asarray(probe[key])[order] # reorder json fields
+        # or consider making new probe obj that has the reordered metadata rather than in place modification
+        # then have fxn return that new probe dict and convert to pi obj after?
 
 def load_probe(
     probe_file: str | Path,
@@ -110,7 +112,7 @@ def load_probe(
         probe[key] = np.array(probe[key])[active_channels_mask]
 
     # Get the mapping to match here, converting json physical order to chan order
-    sort_probe_arrays_by_device_chan(probe)
+    sort_probe_arrays_by_device_chan(probe) 
 
     # Then filter by shank if specified
     n_channels = None
