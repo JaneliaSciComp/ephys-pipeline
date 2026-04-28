@@ -1,6 +1,7 @@
 import numpy as np
 from typing import List, Optional
 
+from spikeinterface.core import BasePreprocessor, BasePreprocessorSegment
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
     ensure_chunk_size,
@@ -240,3 +241,130 @@ def remove_saturation_artifacts(
         ms_after=ms_after,
         mode=mode,
     )
+
+
+class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
+    def __init__(self, parent_recording_segment, n_samples,
+                 abs_threshold, direction, ms_before_s, ms_after_s,
+                 mode, margin_samples):
+        super().__init__(parent_recording_segment, n_samples)
+        self.abs_threshold = abs_threshold
+        self.direction = direction
+        self.ms_before_s = ms_before_s
+        self.ms_after_s = ms_after_s
+        self.mode = mode
+        self.margin_samples = margin_samples
+
+    def get_traces(self, start_frame, end_frame, channel_indices):
+        n_total = self.get_num_samples()
+        fetch_start = max(0, start_frame - self.margin_samples)
+        fetch_end = min(n_total, end_frame + self.margin_samples)
+
+        # Always fetch all channels so detection covers the full probe
+        traces = self.parent_recording_segment.get_traces(
+            fetch_start, fetch_end, slice(None)
+        )
+
+        t = self.abs_threshold
+        if self.direction == "upper":
+            sat = np.any(traces >= t, axis=1)
+        elif self.direction == "lower":
+            sat = np.any(traces <= -t, axis=1)
+        else:
+            sat = np.any((traces >= t) | (traces <= -t), axis=1)
+
+        if sat.any():
+            traces = self._remove(traces, sat)
+
+        offset = start_frame - fetch_start
+        out = traces[offset: offset + (end_frame - start_frame)]
+        if channel_indices is not None:
+            out = out[:, channel_indices]
+        return out
+
+    def _remove(self, traces, sat):
+        traces = traces.copy()
+        n = len(sat)
+        changes = np.diff(sat.astype(np.int8), prepend=0, append=0)
+        starts = np.where(changes == 1)[0]
+        ends = np.where(changes == -1)[0]
+
+        for s, e in zip(starts, ends):
+            # Expand the blanking window by ms_before / ms_after
+            win_start = max(0, s - self.ms_before_s)
+            win_end = min(n, e + self.ms_after_s)
+
+            # Anchor indices: last clean sample before window, first after
+            left = win_start - 1
+            right = win_end
+
+            if self.mode == "linear":
+                if 0 <= left and right < n:
+                    n_pts = right - left - 1
+                    if n_pts > 0:
+                        traces[left + 1: right] = np.linspace(
+                            traces[left].astype(float),
+                            traces[right].astype(float),
+                            n_pts + 2,
+                        )[1:-1]
+                elif left < 0 and right < n:
+                    traces[:right] = traces[right]
+                elif 0 <= left and right >= n:
+                    traces[left + 1:] = traces[left]
+                else:
+                    traces[:] = 0
+            else:
+                traces[win_start:win_end] = 0
+
+        return traces
+
+
+class SaturationArtifactRemover(BasePreprocessor):
+    """Detect and remove saturation artifacts in a single lazy pass.
+
+    Drop-in replacement for the detect_saturation_periods +
+    remove_saturation_artifacts two-step. Each chunk is processed with a
+    margin on both sides (margin_ms) so artifacts that span chunk
+    boundaries are handled correctly.
+
+    Artifacts longer than margin_ms are zeroed rather than interpolated
+    (no clean anchor available within the fetched window).
+    """
+
+    name = "SaturationArtifactRemover"
+
+    def __init__(self, recording, abs_threshold=1500, direction="upper",
+                 ms_before=10.0, ms_after=10.0, mode="linear",
+                 margin_ms=500.0):
+        super().__init__(recording)
+
+        fs = recording.get_sampling_frequency()
+        ms_before_s = int(ms_before * fs / 1000)
+        ms_after_s = int(ms_after * fs / 1000)
+        margin_samples = int(margin_ms * fs / 1000)
+
+        self._kwargs = dict(
+            recording=recording,
+            abs_threshold=abs_threshold,
+            direction=direction,
+            ms_before=ms_before,
+            ms_after=ms_after,
+            mode=mode,
+            margin_ms=margin_ms,
+        )
+
+        for seg_idx in range(recording.get_num_segments()):
+            seg = _SaturationArtifactRemoverSegment(
+                recording._recording_segments[seg_idx],
+                n_samples=recording.get_num_samples(seg_idx),
+                abs_threshold=abs_threshold,
+                direction=direction,
+                ms_before_s=ms_before_s,
+                ms_after_s=ms_after_s,
+                mode=mode,
+                margin_samples=margin_samples,
+            )
+            self.add_recording_segment(seg)
+
+        # Used by SI's saving infrastructure to pre-fetch context
+        self._margin = margin_samples
