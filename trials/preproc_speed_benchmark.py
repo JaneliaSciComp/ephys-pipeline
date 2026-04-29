@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
-"""Benchmark: two-pass artifact removal vs lazy SaturationArtifactRemover.
+"""Run one preprocessing trial and record per-step timing.
 
-Approach A (current):
-    highpass → phase_shift → detect_saturation_periods (full scan)
-                           → remove_saturation_artifacts (lazy)
-                           → split_by_shank → save
-
-Approach B (new):
-    highpass → phase_shift → SaturationArtifactRemover (lazy)
-                           → split_by_shank → save
-
-Both save the per-shank float32 binary to a temp folder so the full lazy
-chain is materialised exactly once.  Timing is wall-clock via time.perf_counter.
+Each trial is defined by a YAML config that controls which pipeline
+variant to use and its parameters.  Run different configs to compare
+approaches; results land in output_dir/preproc_timing.json.
 
 Usage:
     python trials/preproc_speed_benchmark.py \\
         --data_dir /path/to/day_dir --probe a --shank 0 \\
-        --output_dir /path/to/bench_output
+        --config trials/runs/baseline.yaml \\
+        --output_dir /path/to/results
 
     # or via the submit script:
     ./trials/submit_preproc_benchmark.sh /path/to/day_dir a 0 \\
-        trials/runs/preproc_speed_test.yaml
+        trials/runs/baseline.yaml
+
+Steps timed
+-----------
+artifact_detect : detect_saturation_periods scan (two_pass only; 0 for lazy)
+dredge          : motion estimation via DREDge
+bad_channels    : both detect_bad_channels calls
+save            : materialise full chain → binary on disk
+total           : sum of above
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ import shutil
 import sys
 import time
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -52,179 +55,240 @@ SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
 
 
-def _get_sample_shifts() -> np.ndarray:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sample_shifts() -> np.ndarray:
     return get_neuropixels_sample_shifts(384, 16, 16)
 
 
-def _load_raw(data_dir: Path, probe: str, duration_hours: float, n_jobs: int):
-    """Return concatenated raw recording trimmed to duration_hours, plus probe data."""
+def _load_raw(data_dir: Path, probe: str, duration_hours: float) -> si.BaseRecording:
     probe_name = f"np2-{probe}-ephys"
-    recording_files = sorted(glob.glob(str(data_dir / "data" / f"{probe_name}*")))
-    if not recording_files:
+    files = sorted(glob.glob(str(data_dir / "data" / f"{probe_name}*")))
+    if not files:
         raise FileNotFoundError(f"No files matching {probe_name}* in {data_dir / 'data'}")
-    print(f"Found {len(recording_files)} file(s) for probe {probe}")
+    print(f"Found {len(files)} file(s) for probe {probe}")
 
-    recs = []
-    for rf in recording_files:
-        r = se.read_binary(
-            rf, dtype="int16", sampling_frequency=SAMPLE_RATE,
-            num_channels=N_CHANNELS_PROBE,
-        )
-        if r.get_num_frames() > 0:
-            recs.append(r)
-
+    recs = [
+        se.read_binary(f, dtype="int16", sampling_frequency=SAMPLE_RATE,
+                       num_channels=N_CHANNELS_PROBE)
+        for f in files if se.read_binary(
+            f, dtype="int16", sampling_frequency=SAMPLE_RATE,
+            num_channels=N_CHANNELS_PROBE).get_num_frames() > 0
+    ]
     rec = si.concatenate_recordings(recs)
-    n_frames_target = int(duration_hours * 3600 * SAMPLE_RATE)
-    if rec.get_num_frames() < n_frames_target:
-        print(
-            f"Warning: recording is only {rec.get_total_duration() / 3600:.2f} h; "
-            f"benchmarking on full length."
-        )
-    else:
-        rec = rec.frame_slice(0, n_frames_target)
 
-    print(f"Benchmark duration: {rec.get_total_duration() / 3600:.3f} h  "
+    target = int(duration_hours * 3600 * SAMPLE_RATE)
+    if rec.get_num_frames() >= target:
+        rec = rec.frame_slice(0, target)
+    else:
+        print(f"Warning: recording shorter than {duration_hours}h; "
+              f"using full {rec.get_total_duration() / 3600:.3f}h")
+    print(f"Benchmark duration: {rec.get_total_duration() / 3600:.3f}h "
           f"({rec.get_num_frames():,} frames)")
     return rec
 
 
-def _base_chain(raw_rec, probe_data):
-    """Highpass + phase shift — shared by both approaches."""
-    rec = si.concatenate_recordings([raw_rec]) if raw_rec.get_num_segments() > 1 else raw_rec
+def _tick(label: str, t0: float) -> float:
+    elapsed = time.perf_counter() - t0
+    print(f"  {label}: {elapsed:.1f}s")
+    return elapsed
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+
+def run_trial(cfg: dict, data_dir: Path, probe: str, shank: str,
+              output_dir: Path, scratch_dir: Path | None = None) -> dict:
+    timings: dict[str, float] = {}
+
+    probe_file = data_dir / f"{probe}_probe_conf.json"
+    probe_data, _ = load_probe(probe_file)
+    shank_probe, n_ch = load_probe(probe_file, shank)
+    if not n_ch:
+        raise ValueError(f"Shank {shank} has no channels")
+
+    raw = _load_raw(data_dir, probe, cfg.get("duration_hours", 1.0))
+    n_jobs        = cfg.get("n_jobs", 12)
+    chunk_duration = cfg.get("chunk_duration", "1s")
+
+    # ── Highpass + phase shift (lazy) ────────────────────────────────────────
+    hp = cfg.get("highpass", {})
+    rec = raw
     rec.set_probe(probe_data)
-    rec = si.highpass_filter(rec, ftype="bessel", dtype="float32")
-    rec = spre.phase_shift(rec, inter_sample_shift=_get_sample_shifts())
-    return rec
+    rec = si.highpass_filter(rec, ftype=hp.get("ftype", "bessel"), dtype="float32")
+    rec = spre.phase_shift(rec, inter_sample_shift=_sample_shifts())
 
+    # ── Artifact removal ─────────────────────────────────────────────────────
+    art = cfg.get("artifact", {})
+    method      = art.get("method", "two_pass")
+    threshold   = art.get("abs_threshold", 1500)
+    direction   = art.get("direction", "upper")
+    ms_before   = art.get("ms_before", 10.0)
+    ms_after    = art.get("ms_after", 10.0)
+    margin_ms   = art.get("margin_ms", 500.0)
 
-def _split_shank(rec, probe_data, shank_num, shank_probe):
-    """Split a full-probe recording to a single shank."""
+    if method == "two_pass":
+        t0 = time.perf_counter()
+        sat_idx = detect_saturation_periods(
+            rec, abs_threshold=threshold, direction=direction,
+            chunk_duration=chunk_duration, n_jobs=n_jobs,
+        )
+        timings["artifact_detect"] = _tick("artifact_detect", t0)
+        rec = remove_saturation_artifacts(
+            rec, list_periods=sat_idx,
+            ms_before=ms_before, ms_after=ms_after, mode="linear",
+        )
+    elif method == "lazy":
+        timings["artifact_detect"] = 0.0
+        rec = SaturationArtifactRemover(
+            rec, abs_threshold=threshold, direction=direction,
+            ms_before=ms_before, ms_after=ms_after, mode="linear",
+            margin_ms=margin_ms,
+        )
+    else:
+        raise ValueError(f"Unknown artifact method: {method!r} "
+                         "(expected 'two_pass' or 'lazy')")
+
+    # ── Split to shank (lazy) ────────────────────────────────────────────────
     rec.set_property("group", probe_data.shank_ids)
     rec_split = rec.split_by("group")
-    key = str(shank_num)
+    key = str(shank)
     if key not in rec_split:
-        key = int(shank_num)
-    return rec_split[key].set_probe(shank_probe)
+        key = int(shank)
+    rec = rec_split[key].set_probe(shank_probe)
 
+    # ── Intermediate save (materialise filter chain once before DREDge) ──────
+    int_save = cfg.get("intermediate_save", {})
+    if int_save.get("enabled", False):
+        cache_base = scratch_dir if scratch_dir else output_dir
+        int_save_dir = cache_base / "intermediate_cache"
+        t0 = time.perf_counter()
+        rec = rec.save(folder=str(int_save_dir), overwrite=True, n_jobs=n_jobs,
+                       chunk_duration=chunk_duration)
+        timings["intermediate_save"] = _tick("intermediate_save", t0)
+    else:
+        timings["intermediate_save"] = 0.0
 
-def run_approach_a(raw_rec, probe_data, shank_num, shank_probe,
-                   out_dir: Path, n_jobs: int, abs_threshold: int) -> dict:
-    """Two-pass: detect then remove (current approach)."""
-    rec = _base_chain(raw_rec, probe_data)
+    # ── DREDge ───────────────────────────────────────────────────────────────
+    dr = cfg.get("dredge", {})
+    if dr.get("enabled", True):
+        t0 = time.perf_counter()
+        n_before = rec.get_num_frames()
+        rec = spre.correct_motion(
+            rec, preset=dr.get("preset", "dredge"),
+            estimate_motion_kwargs={
+                "win_step_um":   dr.get("win_step_um",   100),
+                "win_scale_um":  dr.get("win_scale_um",  100),
+                "win_margin_um": dr.get("win_margin_um", -15),
+            },
+            n_jobs=n_jobs,
+        )
+        if rec.get_num_frames() != n_before:
+            rec = rec.frame_slice(0, n_before)
+        timings["dredge"] = _tick("dredge", t0)
+    else:
+        timings["dredge"] = 0.0
+        print("  dredge: skipped")
+
+    # ── Global CMR (lazy) ────────────────────────────────────────────────────
+    cmr = cfg.get("cmr", {})
+    rec = si.common_reference(rec, operator=cmr.get("global_operator", "median"),
+                               reference="global")
+
+    # ── Bad channel detection ────────────────────────────────────────────────
+    rec.set_channel_gains(1)
+    rec.set_channel_offsets(0)
 
     t0 = time.perf_counter()
-    saturation_idx = detect_saturation_periods(
-        rec, abs_threshold=abs_threshold, direction="upper",
-        chunk_size=SAMPLE_RATE * 10, n_jobs=n_jobs,
-    )
-    t_detect = time.perf_counter() - t0
-    print(f"[A] detect_saturation_periods: {t_detect:.1f}s")
+    _, dead_labels = si.detect_bad_channels(rec, method="coherence+psd", seed=42)
+    _, noise_labels = si.detect_bad_channels(rec, method="mad", seed=42)
+    timings["bad_channels"] = _tick("bad_channels", t0)
 
-    rec = remove_saturation_artifacts(
-        rec, list_periods=saturation_idx, ms_before=10, ms_after=10, mode="linear",
-    )
-    rec = _split_shank(rec, probe_data, shank_num, shank_probe)
+    dead_ids  = rec.get_channel_ids()[dead_labels  == "dead"]
+    noise_ids = rec.get_channel_ids()[noise_labels == "noise"]
+    print(f"    dead={len(dead_ids)}  noise={len(noise_ids)}")
 
-    save_dir = out_dir / "approach_a_save"
+    bad_ids = np.concatenate([dead_ids, noise_ids])
+    if bad_ids.size > 0:
+        rec = si.interpolate_bad_channels(rec, bad_ids)
+
+    # ── Local CMR + bandpass (lazy) ──────────────────────────────────────────
+    rec = si.common_reference(rec, reference=cmr.get("local_reference", "local"))
+    bp = cfg.get("bandpass", {})
+    rec = spre.bandpass_filter(rec,
+                                freq_min=bp.get("freq_min", 300.0),
+                                freq_max=bp.get("freq_max", 7500.0),
+                                dtype="int16")
+
+    # ── Save (materialises full chain) ───────────────────────────────────────
+    cache_base = scratch_dir if scratch_dir else output_dir
+    save_dir = cache_base / "recording_cache"
     t0 = time.perf_counter()
-    rec.save(folder=str(save_dir), overwrite=True, n_jobs=n_jobs)
-    t_save = time.perf_counter() - t0
-    print(f"[A] save: {t_save:.1f}s")
-
+    rec.save(folder=str(save_dir), overwrite=True, n_jobs=n_jobs,
+             chunk_duration=chunk_duration)
+    timings["save"] = _tick("save", t0)
     shutil.rmtree(save_dir, ignore_errors=True)
-    return {"detect_s": t_detect, "save_s": t_save, "total_s": t_detect + t_save}
+    shutil.rmtree(cache_base / "intermediate_cache", ignore_errors=True)
+
+    timings["total"] = sum(timings.values())
+    return timings
 
 
-def run_approach_b(raw_rec, probe_data, shank_num, shank_probe,
-                   out_dir: Path, n_jobs: int, abs_threshold: int,
-                   margin_ms: float) -> dict:
-    """Single-pass: SaturationArtifactRemover (new approach)."""
-    rec = _base_chain(raw_rec, probe_data)
-    rec = SaturationArtifactRemover(
-        rec, abs_threshold=abs_threshold, direction="upper",
-        ms_before=10, ms_after=10, mode="linear", margin_ms=margin_ms,
-    )
-    rec = _split_shank(rec, probe_data, shank_num, shank_probe)
-
-    save_dir = out_dir / "approach_b_save"
-    t0 = time.perf_counter()
-    rec.save(folder=str(save_dir), overwrite=True, n_jobs=n_jobs)
-    t_save = time.perf_counter() - t0
-    print(f"[B] save (detect + remove inline): {t_save:.1f}s")
-
-    shutil.rmtree(save_dir, ignore_errors=True)
-    return {"detect_s": 0.0, "save_s": t_save, "total_s": t_save}
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Benchmark two-pass vs lazy artifact removal"
+        description="Run one preprocessing trial and record timing"
     )
-    parser.add_argument("--data_dir",       required=True)
-    parser.add_argument("--probe",          required=True, choices=["a", "b"])
-    parser.add_argument("--shank",          required=True, choices=["0", "1", "2", "3"])
-    parser.add_argument("--output_dir",     required=True)
-    parser.add_argument("--duration_hours", type=float, default=1.0)
-    parser.add_argument("--margin_ms",      type=float, default=500.0,
-                        help="Margin around each chunk for approach B (ms)")
-    parser.add_argument("--abs_threshold",  type=int,   default=1500)
-    parser.add_argument("--n_jobs",         type=int,   default=12)
+    parser.add_argument("--data_dir",   required=True)
+    parser.add_argument("--probe",      required=True, choices=["a", "b"])
+    parser.add_argument("--shank",      required=True, choices=["0", "1", "2", "3"])
+    parser.add_argument("--config",     required=True, help="YAML trial config")
+    parser.add_argument("--output_dir",  required=True)
+    parser.add_argument("--scratch_dir", default=None,
+                        help="Local scratch dir for temp caches (default: output_dir)")
     args = parser.parse_args()
 
-    data_dir   = Path(args.data_dir)
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    probe_file  = data_dir / f"{args.probe}_probe_conf.json"
-    probe_data, _ = load_probe(probe_file)
-    shank_probe, n_ch = load_probe(probe_file, args.shank)
-    if not n_ch:
-        print(f"ERROR: shank {args.shank} has no channels"); return 1
+    print(f"\n{'=' * 60}")
+    print(f"Trial : {cfg.get('trial_name', Path(args.config).stem)}")
+    print(f"Probe : {args.probe}  shank {args.shank}")
+    print(f"{'=' * 60}\n")
 
-    raw_rec = _load_raw(data_dir, args.probe, args.duration_hours, args.n_jobs)
+    scratch_dir = Path(args.scratch_dir) if args.scratch_dir else None
+    if scratch_dir:
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Scratch : {scratch_dir}")
 
-    print("\n" + "=" * 60)
-    print("APPROACH A — two-pass (detect then remove)")
-    print("=" * 60)
-    result_a = run_approach_a(
-        raw_rec, probe_data, args.shank, shank_probe,
-        output_dir, args.n_jobs, args.abs_threshold,
-    )
+    timings = run_trial(cfg, Path(args.data_dir), args.probe, args.shank,
+                        output_dir, scratch_dir=scratch_dir)
 
-    print("\n" + "=" * 60)
-    print("APPROACH B — single-pass SaturationArtifactRemover")
-    print("=" * 60)
-    result_b = run_approach_b(
-        raw_rec, probe_data, args.shank, shank_probe,
-        output_dir, args.n_jobs, args.abs_threshold, args.margin_ms,
-    )
+    print(f"\n{'=' * 60}")
+    print("TIMING SUMMARY")
+    print(f"{'=' * 60}")
+    for k, v in timings.items():
+        print(f"  {k:<20}: {v:.1f}s")
 
-    speedup = result_a["total_s"] / result_b["total_s"] if result_b["total_s"] > 0 else float("nan")
-
-    print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    print(f"  Duration benchmarked : {args.duration_hours:.2f} h")
-    print(f"  [A] detect           : {result_a['detect_s']:.1f}s")
-    print(f"  [A] save             : {result_a['save_s']:.1f}s")
-    print(f"  [A] total            : {result_a['total_s']:.1f}s")
-    print(f"  [B] save (combined)  : {result_b['save_s']:.1f}s")
-    print(f"  [B] total            : {result_b['total_s']:.1f}s")
-    print(f"  Speedup B vs A       : {speedup:.2f}x")
-
-    summary = {
-        "duration_hours": args.duration_hours,
-        "probe": args.probe, "shank": args.shank,
-        "abs_threshold": args.abs_threshold,
-        "margin_ms": args.margin_ms,
-        "n_jobs": args.n_jobs,
-        "approach_a": result_a,
-        "approach_b": result_b,
-        "speedup_b_over_a": speedup,
+    result = {
+        "trial_name": cfg.get("trial_name", Path(args.config).stem),
+        "probe": args.probe,
+        "shank": args.shank,
+        "config": cfg,
+        "timings": timings,
     }
-    out_path = output_dir / "preproc_speed_results.json"
-    out_path.write_text(json.dumps(summary, indent=2))
-    print(f"\nResults saved to {out_path}")
+    out_path = output_dir / "preproc_timing.json"
+    out_path.write_text(json.dumps(result, indent=2))
+    print(f"\nSaved to {out_path}")
     return 0
 
 

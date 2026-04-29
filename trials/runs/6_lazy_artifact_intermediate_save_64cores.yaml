@@ -1,0 +1,37 @@
+trial_name: 6_lazy_artifact_intermediate_save_64cores
+
+description: |
+  SaturationArtifactRemover (lazy) + intermediate save before DREDge, at 64 cores.
+  Same as 4_lazy_artifact_intermediate_save but with n_jobs=64.
+
+duration_hours: 1.0
+n_jobs: 64
+
+highpass:
+  ftype: bessel
+
+artifact:
+  method: lazy
+  abs_threshold: 1500
+  direction: upper
+  ms_before: 10
+  ms_after: 10
+  margin_ms: 500
+
+intermediate_save:
+  enabled: true
+
+dredge:
+  enabled: true
+  preset: dredge
+  win_step_um: 100
+  win_scale_um: 100
+  win_margin_um: -15
+
+cmr:
+  global_operator: median
+  local_reference: local
+
+bandpass:
+  freq_min: 300
+  freq_max: 7500

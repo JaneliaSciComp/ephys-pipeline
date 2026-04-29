@@ -1,0 +1,39 @@
+trial_name: 10_chunk_5s
+
+description: |
+  Lazy artifact + intermediate save on scratch, chunk_duration=5s.
+  Based on trial 7; varies chunk size to find optimal I/O/scheduling balance.
+  Submit with: BENCH_SCRATCH='/scratch/sheppardj/$LSB_JOBID'
+
+duration_hours: 1.0
+n_jobs: 12
+chunk_duration: "5s"
+
+highpass:
+  ftype: bessel
+
+artifact:
+  method: lazy
+  abs_threshold: 1500
+  direction: upper
+  ms_before: 10
+  ms_after: 10
+  margin_ms: 500
+
+intermediate_save:
+  enabled: true
+
+dredge:
+  enabled: true
+  preset: dredge
+  win_step_um: 100
+  win_scale_um: 100
+  win_margin_um: -15
+
+cmr:
+  global_operator: median
+  local_reference: local
+
+bandpass:
+  freq_min: 300
+  freq_max: 7500

@@ -1,0 +1,41 @@
+trial_name: 7_lazy_artifact_intermediate_save_scratch
+
+description: |
+  SaturationArtifactRemover (lazy) + intermediate save on local scratch.
+  Same workflow as 4_lazy_artifact_intermediate_save but temp caches
+  (intermediate_cache and recording_cache) are written to local node
+  scratch rather than NFS, isolating the I/O speedup from the
+  intermediate save strategy.
+  Submit with: BENCH_SCRATCH='/scratch/sheppardj/$LSB_JOBID'
+
+duration_hours: 1.0
+n_jobs: 12
+
+highpass:
+  ftype: bessel
+
+artifact:
+  method: lazy
+  abs_threshold: 1500
+  direction: upper
+  ms_before: 10
+  ms_after: 10
+  margin_ms: 500
+
+intermediate_save:
+  enabled: true
+
+dredge:
+  enabled: true
+  preset: dredge
+  win_step_um: 100
+  win_scale_um: 100
+  win_margin_um: -15
+
+cmr:
+  global_operator: median
+  local_reference: local
+
+bandpass:
+  freq_min: 300
+  freq_max: 7500

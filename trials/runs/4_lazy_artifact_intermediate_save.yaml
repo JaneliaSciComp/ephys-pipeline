@@ -1,0 +1,40 @@
+trial_name: 4_lazy_artifact_intermediate_save
+
+description: |
+  SaturationArtifactRemover (lazy) + intermediate save before DREDge.
+  Filter chain and lazy artifact removal are materialised to disk once
+  after the shank split, so DREDge, bad channel detection, and the
+  final save all read from a simple binary rather than re-applying the
+  full chain.
+
+duration_hours: 1.0
+n_jobs: 12
+
+highpass:
+  ftype: bessel
+
+artifact:
+  method: lazy
+  abs_threshold: 1500
+  direction: upper
+  ms_before: 10
+  ms_after: 10
+  margin_ms: 500
+
+intermediate_save:
+  enabled: true
+
+dredge:
+  enabled: true
+  preset: dredge
+  win_step_um: 100
+  win_scale_um: 100
+  win_margin_um: -15
+
+cmr:
+  global_operator: median
+  local_reference: local
+
+bandpass:
+  freq_min: 300
+  freq_max: 7500

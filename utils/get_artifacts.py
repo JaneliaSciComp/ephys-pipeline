@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Optional
 
-from spikeinterface.core import BasePreprocessor, BasePreprocessorSegment
+from spikeinterface.preprocessing.basepreprocessor import BasePreprocessor, BasePreprocessorSegment
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
     ensure_chunk_size,
@@ -244,10 +244,10 @@ def remove_saturation_artifacts(
 
 
 class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
-    def __init__(self, parent_recording_segment, n_samples,
+    def __init__(self, parent_recording_segment,
                  abs_threshold, direction, ms_before_s, ms_after_s,
                  mode, margin_samples):
-        super().__init__(parent_recording_segment, n_samples)
+        super().__init__(parent_recording_segment)
         self.abs_threshold = abs_threshold
         self.direction = direction
         self.ms_before_s = ms_before_s
@@ -356,7 +356,6 @@ class SaturationArtifactRemover(BasePreprocessor):
         for seg_idx in range(recording.get_num_segments()):
             seg = _SaturationArtifactRemoverSegment(
                 recording._recording_segments[seg_idx],
-                n_samples=recording.get_num_samples(seg_idx),
                 abs_threshold=abs_threshold,
                 direction=direction,
                 ms_before_s=ms_before_s,
