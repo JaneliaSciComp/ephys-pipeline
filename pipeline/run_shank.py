@@ -127,8 +127,8 @@ def split_recording(
         total_recording,
         abs_threshold=1500,
         direction="upper",
-        ms_before=100,
-        ms_after=100,
+        ms_before=150,
+        ms_after=150,
         mode="linear",
         margin_ms=500,
     )
