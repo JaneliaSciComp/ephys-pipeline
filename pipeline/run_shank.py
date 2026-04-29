@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -24,7 +25,7 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import detect_saturation_periods, remove_saturation_artifacts
+from utils.get_artifacts import SaturationArtifactRemover
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
@@ -78,6 +79,7 @@ def split_recording(
     global_probe_data: pi.Probe,
     shank_num: int | str,
     shank_probe: pi.Probe,
+    shank_folder: Path,
 ) -> tuple[si.BaseRecording, list[str]]:
     """Process and clean the recording for a specific shank.
 
@@ -120,24 +122,16 @@ def split_recording(
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
 
-    # 2. Artifact removal on filtered data (lower threshold, short window, linear interp)
-    print("Detecting saturation artifacts...")
-    saturation_idx = detect_saturation_periods(
+    # 2. Artifact removal — lazy single-pass
+    total_recording = SaturationArtifactRemover(
         total_recording,
         abs_threshold=1500,
         direction="upper",
-        chunk_size=30000 * 10,
-        n_jobs=12,
-    )
-    print(saturation_idx)
-    total_recording = remove_saturation_artifacts(
-        total_recording,
-        list_periods=saturation_idx,
-        ms_before=10,
-        ms_after=10,
+        ms_before=100,
+        ms_after=100,
         mode="linear",
+        margin_ms=500,
     )
-    print("Done removing artifacts.")
 
     total_recording.set_property("group", global_probe_data.shank_ids)
 
@@ -157,12 +151,18 @@ def split_recording(
     rec = rec_split[shank_key]
     rec = rec.set_probe(shank_probe)
 
-    # 3. DREDge motion correction per shank (before CMR)
+    # 3. Intermediate save — materialise filter chain once before DREDge
+    shank_folder_tmp = Path(shank_folder) / "intermediate_cache"
+    print("Saving intermediate cache...")
+    rec = rec.save(folder=str(shank_folder_tmp), overwrite=True,
+                   n_jobs=12, chunk_duration="5s")
+
+    # 4. DREDge motion correction per shank (before CMR)
     print("Running DREDge motion correction...")
     n_frames_before = rec.get_num_frames()
     rec = spre.correct_motion(
         rec, preset="dredge",
-        estimate_motion_kwargs={"win_step_um": 100, "win_scale_um": 100, "win_margin_um": -15},
+        estimate_motion_kwargs={"win_step_um": 150, "win_scale_um": 150, "win_margin_um": -75},
         n_jobs=12,
     )
     if rec.get_num_frames() != n_frames_before:
@@ -221,25 +221,28 @@ if __name__ == "__main__":
     print(f"n_channels_shank: {N_CHANNELS_SHANK} (extracted from JSON)")
     print(shank_probe)
 
-    recording_files = collect_files(data_folder, probe_name)
-    shank_recording, recording_paths = split_recording(
-        recording_files, probe_name, probe_data, shank_num, shank_probe
-    )
-
     output_folder.mkdir(parents=True, exist_ok=True)
     probe_folder = output_folder / probe
     probe_folder.mkdir(parents=True, exist_ok=True)
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
+    recording_files = collect_files(data_folder, probe_name)
+    shank_recording, recording_paths = split_recording(
+        recording_files, probe_name, probe_data, shank_num, shank_probe,
+        shank_folder=shank_folder,
+    )
+
     print("Saving shank recording...")
     start_time = time.time()
 
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
         shank_recording, shank_folder, data_name='shank_recording.bin', dtype=np.int16,
-        chunksize=30000 * 8, export_probe=True, probe_name='probe.prb',
+        chunksize=30000 * 5, export_probe=True, probe_name='probe.prb',
         max_workers=12,
     )
+
+    shutil.rmtree(shank_folder / "intermediate_cache", ignore_errors=True)
     print(f"Saved binary recording to {filename}")
     print(f"Duration: {time.time() - start_time:.1f}s")
 
