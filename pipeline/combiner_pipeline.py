@@ -1069,9 +1069,9 @@ class DataProcessor:
         labels['probe_name'] = probe_name
 
         if 'sua_prediction' in labels.columns and 'noise_prediction' in labels.columns:
-            binned.columns = [f"{probe_name}_cluster_{c}_{labels.iloc[0]['sua_prediction']}_{labels.iloc[0]['noise_prediction']}_shank_{shank_idx}" for c in binned.columns]
+            binned.columns = [f"{probe_name}_cluster_{c}_{labels.iloc[c]['sua_prediction']}_{labels.iloc[c]['noise_prediction']}_shank_{shank_idx}" for c in binned.columns]
         elif 'KSLabel' in labels.columns:
-            binned.columns = [f"{probe_name}_cluster_{c}_{labels.iloc[0]['KSLabel']}_shank_{shank_idx}" for c in binned.columns]
+            binned.columns = [f"{probe_name}_cluster_{c}_{labels.iloc[c]['KSLabel']}_shank_{shank_idx}" for c in binned.columns]
 
         binned.fillna(0, inplace=True)
         print(f'processed neural data for {dataset_name}') if self.verbose else None
