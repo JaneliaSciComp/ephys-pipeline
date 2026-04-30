@@ -1,6 +1,7 @@
 import numpy as np
 from typing import List, Optional
 
+from spikeinterface.preprocessing.basepreprocessor import BasePreprocessor, BasePreprocessorSegment
 from spikeinterface.core.job_tools import (
     fix_job_kwargs,
     ensure_chunk_size,
@@ -182,6 +183,68 @@ def detect_saturation_periods(
     return list_periods
 
 
+def merge_artifact_logs(log_dir, fs: float, output_path, n_segments: int = 1) -> None:
+    """Merge per-chunk artifact logs written by SaturationArtifactRemover into one JSON.
+
+    Periods are deduplicated and sorted within each segment before saving.
+    """
+    import json
+    from pathlib import Path
+    log_dir = Path(log_dir)
+
+    seg_events = [[] for _ in range(n_segments)]
+    if log_dir.exists():
+        for f in log_dir.glob("seg*_*.json"):
+            try:
+                seg_idx = int(f.name.split("_", 1)[0].lstrip("seg"))
+            except ValueError:
+                continue
+            d = json.loads(f.read_text())
+            for s, e in zip(d.get("starts", []), d.get("ends", [])):
+                seg_events[seg_idx].append((int(s), int(e)))
+
+    list_periods = []
+    for events in seg_events:
+        events = sorted(set(events))
+        flat = []
+        for s, e in events:
+            flat.extend([s, e])
+        list_periods.append(flat)
+
+    save_artifact_periods(list_periods, fs, output_path)
+
+
+def save_artifact_periods(list_periods: List[List[int]], fs: float, output_path) -> None:
+    """Save detected artifact periods as JSON with frame indices and seconds."""
+    import json
+    from pathlib import Path
+
+    segments = []
+    for periods in list_periods:
+        events = []
+        for i in range(0, len(periods), 2):
+            start_frame = int(periods[i])
+            end_frame   = int(periods[i + 1])
+            events.append({
+                "start_frame":  start_frame,
+                "end_frame":    end_frame,
+                "start_sec":    round(start_frame / fs, 4),
+                "end_sec":      round(end_frame   / fs, 4),
+                "duration_sec": round((end_frame - start_frame) / fs, 4),
+            })
+        segments.append(events)
+
+    n_total   = sum(len(s) for s in segments)
+    dur_total = sum(e["duration_sec"] for s in segments for e in s)
+
+    Path(output_path).write_text(json.dumps({
+        "n_artifacts":        n_total,
+        "total_duration_sec": round(dur_total, 4),
+        "segments":           segments,
+    }, indent=2))
+    print(f"  {n_total} artifact periods ({dur_total:.2f}s total) → {output_path}")
+
+
 def remove_saturation_artifacts(
     recording,
     list_periods: List[List[int]],
@@ -240,3 +303,158 @@ def remove_saturation_artifacts(
         ms_after=ms_after,
         mode=mode,
     )
+
+
+class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
+    def __init__(self, parent_recording_segment,
+                 abs_threshold, direction, ms_before_s, ms_after_s,
+                 mode, margin_samples, log_dir=None, seg_idx=0):
+        super().__init__(parent_recording_segment)
+        self.abs_threshold = abs_threshold
+        self.direction = direction
+        self.ms_before_s = ms_before_s
+        self.ms_after_s = ms_after_s
+        self.mode = mode
+        self.margin_samples = margin_samples
+        self.log_dir = log_dir
+        self.seg_idx = seg_idx
+
+    def get_traces(self, start_frame, end_frame, channel_indices):
+        n_total = self.get_num_samples()
+        fetch_start = max(0, start_frame - self.margin_samples)
+        fetch_end = min(n_total, end_frame + self.margin_samples)
+
+        # Always fetch all channels so detection covers the full probe
+        traces = self.parent_recording_segment.get_traces(
+            fetch_start, fetch_end, slice(None)
+        )
+
+        t = self.abs_threshold
+        if self.direction == "upper":
+            sat = np.any(traces >= t, axis=1)
+        elif self.direction == "lower":
+            sat = np.any(traces <= -t, axis=1)
+        else:
+            sat = np.any((traces >= t) | (traces <= -t), axis=1)
+
+        if sat.any():
+            if self.log_dir is not None:
+                self._log_periods(sat, fetch_start, start_frame, end_frame)
+            traces = self._remove(traces, sat)
+
+        offset = start_frame - fetch_start
+        out = traces[offset: offset + (end_frame - start_frame)]
+        if channel_indices is not None:
+            out = out[:, channel_indices]
+        return out
+
+    def _log_periods(self, sat, fetch_start, start_frame, end_frame):
+        """Write periods that BEGIN within the requested chunk to a per-chunk file.
+
+        Periods starting within the margin (before start_frame or after end_frame)
+        are dropped — they'll be logged by the chunk that owns them, avoiding
+        duplicate detections at chunk boundaries.
+        """
+        import json
+        from pathlib import Path
+        changes = np.diff(sat.astype(np.int8), prepend=0, append=0)
+        starts = np.where(changes == 1)[0] + fetch_start
+        ends   = np.where(changes == -1)[0] + fetch_start
+        keep = (starts >= start_frame) & (starts < end_frame)
+        if not keep.any():
+            return
+        Path(self.log_dir).mkdir(parents=True, exist_ok=True)
+        log_path = Path(self.log_dir) / f"seg{self.seg_idx}_{start_frame:012d}.json"
+        log_path.write_text(json.dumps({
+            "starts": starts[keep].tolist(),
+            "ends":   ends[keep].tolist(),
+        }))
+
+    def _remove(self, traces, sat):
+        traces = traces.copy()
+        n = len(sat)
+        changes = np.diff(sat.astype(np.int8), prepend=0, append=0)
+        starts = np.where(changes == 1)[0]
+        ends = np.where(changes == -1)[0]
+
+        for s, e in zip(starts, ends):
+            # Expand the blanking window by ms_before / ms_after
+            win_start = max(0, s - self.ms_before_s)
+            win_end = min(n, e + self.ms_after_s)
+
+            # Anchor indices: last clean sample before window, first after
+            left = win_start - 1
+            right = win_end
+
+            if self.mode == "linear":
+                if 0 <= left and right < n:
+                    n_pts = right - left - 1
+                    if n_pts > 0:
+                        traces[left + 1: right] = np.linspace(
+                            traces[left].astype(float),
+                            traces[right].astype(float),
+                            n_pts + 2,
+                        )[1:-1]
+                elif left < 0 and right < n:
+                    traces[:right] = traces[right]
+                elif 0 <= left and right >= n:
+                    traces[left + 1:] = traces[left]
+                else:
+                    traces[:] = 0
+            else:
+                traces[win_start:win_end] = 0
+
+        return traces
+
+
+class SaturationArtifactRemover(BasePreprocessor):
+    """Detect and remove saturation artifacts in a single lazy pass.
+
+    Drop-in replacement for the detect_saturation_periods +
+    remove_saturation_artifacts two-step. Each chunk is processed with a
+    margin on both sides (margin_ms) so artifacts that span chunk
+    boundaries are handled correctly.
+
+    Artifacts longer than margin_ms are zeroed rather than interpolated
+    (no clean anchor available within the fetched window).
+    """
+
+    name = "SaturationArtifactRemover"
+
+    def __init__(self, recording, abs_threshold=1500, direction="upper",
+                 ms_before=10.0, ms_after=10.0, mode="linear",
+                 margin_ms=500.0, log_dir=None):
+        super().__init__(recording)
+
+        fs = recording.get_sampling_frequency()
+        ms_before_s = int(ms_before * fs / 1000)
+        ms_after_s = int(ms_after * fs / 1000)
+        margin_samples = int(margin_ms * fs / 1000)
+
+        self._kwargs = dict(
+            recording=recording,
+            abs_threshold=abs_threshold,
+            direction=direction,
+            ms_before=ms_before,
+            ms_after=ms_after,
+            mode=mode,
+            margin_ms=margin_ms,
+            log_dir=str(log_dir) if log_dir is not None else None,
+        )
+
+        for seg_idx in range(recording.get_num_segments()):
+            seg = _SaturationArtifactRemoverSegment(
+                recording._recording_segments[seg_idx],
+                abs_threshold=abs_threshold,
+                direction=direction,
+                ms_before_s=ms_before_s,
+                ms_after_s=ms_after_s,
+                mode=mode,
+                margin_samples=margin_samples,
+                log_dir=str(log_dir) if log_dir is not None else None,
+                seg_idx=seg_idx,
+            )
+            self.add_recording_segment(seg)
+
+        # Used by SI's saving infrastructure to pre-fetch context
+        self._margin = margin_samples
