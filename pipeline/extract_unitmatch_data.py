@@ -32,21 +32,23 @@ class UnitDataExtractor:
     unit in fixed time windows.
     """
     
-    def __init__(self, data_dir: Union[str, Path], probe_letter: str = 'a', shank_num: int = 0):
+    def __init__(self, data_dir: Union[str, Path], probe_letter: str = 'a', shank_num: int = 0,
+                 output_subdir: str = 'output'):
         """
         Initialize the extractor for a specific probe and shank
-        
+
         Args:
             data_dir: Base directory containing the neuropixels data
             probe_letter: Probe letter ('a' or 'b')
             shank_num: Shank number (0, 1, 2, or 3)
+            output_subdir: Subdirectory of data_dir containing pipeline outputs.
         """
         self.data_dir = Path(data_dir)
         self.probe_letter = probe_letter
         self.shank_num = shank_num
-        
+
         # Set up paths
-        self.common_dir = self.data_dir / 'output' / probe_letter / f'shank_{shank_num}'
+        self.common_dir = self.data_dir / output_subdir / probe_letter / f'shank_{shank_num}'
         self.ks_dir = self.common_dir / 'kilosort4'
         self.data_path = self.common_dir / 'shank_recording.bin'
         self.output_dir = self.ks_dir / 'RawWaveforms'
@@ -244,10 +246,11 @@ class UnitDataExtractor:
         except Exception as e:
             print(f"Error processing unit {unit_id}: {e}")
 
-def process_all_probes_and_shanks(data_dir: Union[str, Path], 
-                                 probes: List[str] = ['a', 'b'], 
+def process_all_probes_and_shanks(data_dir: Union[str, Path],
+                                 probes: List[str] = ['a', 'b'],
                                  shanks: List[int] = [0, 1, 2, 3],
-                                 n_jobs: int = -1) -> None:
+                                 n_jobs: int = -1,
+                                 output_subdir: str = 'output') -> None:
     """
     Process all probes and shanks
     
@@ -266,7 +269,7 @@ def process_all_probes_and_shanks(data_dir: Union[str, Path],
             print(f"{'='*60}")
             
             try:
-                extractor = UnitDataExtractor(data_dir, probe, shank)
+                extractor = UnitDataExtractor(data_dir, probe, shank, output_subdir=output_subdir)
                 extractor.process_all_units(n_jobs=n_jobs)
             except Exception as e:
                 print(f"Error processing probe {probe}, shank {shank}: {e}")
@@ -287,13 +290,17 @@ def main():
                        help='Number of parallel jobs (-1 for all cores)')
     parser.add_argument('--verbose', type=int, default=10,
                        help='Verbosity level for parallel processing')
-    
+    parser.add_argument('--output_subdir', type=str, default='output',
+                       help='Subdirectory of data_dir containing pipeline outputs (default: output).')
+
     args = parser.parse_args()
-    
+
     if args.all_probes:
-        process_all_probes_and_shanks(args.data_dir, n_jobs=args.n_jobs)
+        process_all_probes_and_shanks(args.data_dir, n_jobs=args.n_jobs,
+                                      output_subdir=args.output_subdir)
     elif args.probe is not None and args.shank is not None:
-        extractor = UnitDataExtractor(args.data_dir, args.probe, args.shank)
+        extractor = UnitDataExtractor(args.data_dir, args.probe, args.shank,
+                                      output_subdir=args.output_subdir)
         extractor.process_all_units(n_jobs=args.n_jobs, verbose=args.verbose)
     else:
         print("Error: Must specify either --all_probes or both --probe and --shank")

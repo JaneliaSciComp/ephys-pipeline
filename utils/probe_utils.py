@@ -29,16 +29,14 @@ def find_shank_channels(probe_dict: dict, shank_num: int | str) -> np.ndarray:
 def load_probe(
     probe_file: str | Path,
     shank_num: int | str | None = None,
-    n_channels_shank: int | None = None,
 ) -> tuple[pi.Probe, int | None]:
     """
     Load probe configuration from JSON file.
-    
+
     Args:
         probe_file: Path to probe configuration JSON file
         shank_num: Optional shank number to filter channels
-        n_channels_shank: Optional number of channels per shank
-        
+
     Returns:
         probe: ProbeInterface probe object
         n_channels: Number of channels (None if shank_num not specified)
@@ -61,11 +59,7 @@ def load_probe(
         for key in ['contact_positions', 'contact_plane_axes', 'contact_shapes', 
                     'contact_shape_params', 'device_channel_indices', 'contact_ids', 'shank_ids']:
             probe[key] = probe[key][shank_channels_mask]
-        # Count actual channels from JSON after filtering
         n_channels = len(probe['device_channel_indices'])
-        # Use provided n_channels_shank if given, otherwise use count from JSON
-        channels_count = n_channels_shank if n_channels_shank is not None else n_channels
-        probe['device_channel_indices'] = np.arange(0, channels_count)
 
     probe = pi.Probe.from_dict(probe)
     return probe, n_channels

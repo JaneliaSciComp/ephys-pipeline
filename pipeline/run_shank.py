@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -78,18 +79,18 @@ def split_recording(
     probe_name: str,
     global_probe_data: pi.Probe,
     shank_num: int | str,
-    shank_probe: pi.Probe,
     shank_folder: Path,
     scratch_dir: Path | None = None,
+    duration_s: float | None = None,
 ) -> tuple[si.BaseRecording, list[str]]:
     """Process and clean the recording for a specific shank.
 
     Args:
         recording_files (list): List of file paths for the probe.
         probe_name (str): Probe name (kept for interface compatibility).
-        global_probe_data (Probe): Probe data object with geometry details.
+        global_probe_data (Probe): Global probe with all shanks; channel_slice on
+            this drives per-shank selection and probe propagation.
         shank_num (int or str): Which shank to process.
-        shank_probe (Probe): Probe object filtered to the target shank.
 
     Returns:
         tuple: (final_rec, recording_paths) — processed RecordingExtractor
@@ -115,30 +116,30 @@ def split_recording(
         recording_paths.append(recording_file)
 
     total_recording = si.concatenate_recordings(recordings)
-    total_recording.set_probe(global_probe_data)
+    # Attach the global probe (absolute device_channel_indices straight from JSON)
+    # to the full recording. channel_slice below will then auto-slice the probe
+    # and remap indices to local positions on the per-shank sub-recording — we
+    # never touch device_channel_indices ourselves.
+    total_recording = total_recording.set_probe(global_probe_data)
+
+    # Optional truncation for short test runs (live runs pass duration_s=None).
+    if duration_s is not None:
+        n_frames = min(int(duration_s * SAMPLE_RATE), total_recording.get_num_frames())
+        total_recording = total_recording.frame_slice(start_frame=0, end_frame=n_frames)
+        print(f"Truncated recording to first {n_frames} samples ({n_frames / SAMPLE_RATE:.1f}s)")
 
     # 1. Phase shift on full recording (lazy; 384 shifts indexed correctly before split)
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
 
-    # 2. Split to shank — all further processing operates on shank channels only
-    total_recording.set_property("group", global_probe_data.shank_ids)
-
-    rec_split = total_recording.split_by("group")
-    shank_key = str(shank_num)
-    if shank_key not in rec_split:
-        try:
-            shank_key = int(shank_num)
-        except Exception:
-            pass
-    if shank_key not in rec_split:
-        raise KeyError(
-            f"Shank '{shank_num}' (key '{shank_key}') not found in split recording groups: "
-            f"{list(rec_split.keys())}"
-        )
-
-    rec = rec_split[shank_key]
-    rec = rec.set_probe(shank_probe)
+    # 2. Slice to this shank's channels, identified by their device_channel_indices
+    #    in the global probe. select_channels preserves+remaps the attached probe.
+    shank_mask = np.asarray(global_probe_data.shank_ids).astype(str) == str(shank_num)
+    shank_channel_ids = np.asarray(global_probe_data.device_channel_indices)[shank_mask].tolist()
+    rec = total_recording.select_channels(channel_ids=shank_channel_ids)
+    print(f"Shank {shank_num} sub-recording: {rec.get_num_channels()} channels, "
+          f"channel_ids={rec.get_channel_ids()}, "
+          f"probe device_channel_indices={rec.get_probe().device_channel_indices}")
 
     # 3. Lazy saturation artifact removal — single pass detect+remove on raw shank data;
     #    each chunk worker logs its detected periods to art_log_dir, merged after intermediate save.
@@ -225,24 +226,34 @@ def split_recording(
 
 
 if __name__ == "__main__":
-    folder = Path(sys.argv[1])
-    probe = sys.argv[2]
-    shank_num = sys.argv[3]
+    parser = argparse.ArgumentParser(description="Spike-sort one probe/shank with Kilosort4.")
+    parser.add_argument("folder", type=Path, help="Day directory containing data/ and output/.")
+    parser.add_argument("probe", choices=["a", "b"])
+    parser.add_argument("shank_num", choices=["0", "1", "2", "3"])
+    parser.add_argument("--duration_s", type=float, default=None,
+                        help="If set, truncate concatenated recording to first N seconds (test runs).")
+    parser.add_argument("--output_subdir", type=str, default="output",
+                        help="Subdirectory of folder for outputs (default: output).")
+    args = parser.parse_args()
+
+    folder = args.folder
+    probe = args.probe
+    shank_num = args.shank_num
+    duration_s = args.duration_s
 
     data_folder = folder / "data"
-    output_folder = folder / "output"
+    output_folder = folder / args.output_subdir
     probe_name = f"np2-{probe}-ephys"
 
     probe_file = folder / f"{probe}_probe_conf.json"
     probe_data, _ = load_probe(probe_file)
-    shank_probe, N_CHANNELS_SHANK = load_probe(probe_file, shank_num)
+    _, N_CHANNELS_SHANK = load_probe(probe_file, shank_num)
 
     if N_CHANNELS_SHANK is None or N_CHANNELS_SHANK == 0:
         print(f"ERROR: Shank {shank_num} has zero channels. Exiting without processing.")
         sys.exit(1)
 
     print(f"n_channels_shank: {N_CHANNELS_SHANK} (extracted from JSON)")
-    print(shank_probe)
 
     output_folder.mkdir(parents=True, exist_ok=True)
     probe_folder = output_folder / probe
@@ -259,8 +270,9 @@ if __name__ == "__main__":
 
     recording_files = collect_files(data_folder, probe_name)
     shank_recording, recording_paths = split_recording(
-        recording_files, probe_name, probe_data, shank_num, shank_probe,
+        recording_files, probe_name, probe_data, shank_num,
         shank_folder=shank_folder, scratch_dir=scratch_dir,
+        duration_s=duration_s,
     )
 
     print("Saving shank recording...")
