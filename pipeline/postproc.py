@@ -260,6 +260,8 @@ if __name__ == "__main__":
     parser.add_argument("folder", type=Path, help="Base folder containing data and output directories.")
     parser.add_argument("probe", choices=["a", "b"], help="Probe letter.")
     parser.add_argument("shank_num", choices=["0", "1", "2", "3"], help="Shank number.")
+    parser.add_argument("--shank_folder", type=Path, default=None,
+                        help="Override shank folder path directly (e.g. for trial outputs).")
     args = parser.parse_args()
 
     folder = args.folder
@@ -273,9 +275,12 @@ if __name__ == "__main__":
     ]
     
     # Set up paths
-    output_folder = folder / "output"
-    probe_folder = output_folder / probe
-    shank_folder = probe_folder / f"shank_{shank_num}"
+    if args.shank_folder is not None:
+        shank_folder = args.shank_folder
+    else:
+        output_folder = folder / "output"
+        probe_folder = output_folder / probe
+        shank_folder = probe_folder / f"shank_{shank_num}"
     probe_file = folder / f"{probe}_probe_conf.json"
     
     print(f"Post-processing shank {shank_num} for probe {probe}")

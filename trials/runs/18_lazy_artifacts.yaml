@@ -1,7 +1,10 @@
-trial_name: 15_check_pipeline
+trial_name: 18_lazy_artifacts
 
 description: |
-  Checking with different DREDge params'
+  Single-pass detect+remove via SaturationArtifactRemover. Each chunk worker
+  detects, interpolates, and logs detected periods to a per-chunk file during
+  the intermediate save. After save, logs are merged into artifact_periods.json.
+  Skips the dedicated detection scan (~1.5 min saved on 1h data).
 
 duration_hours: 1.0
 n_jobs: 12
@@ -11,11 +14,14 @@ highpass:
   ftype: bessel
 
 artifact:
-  abs_threshold: 7500
+  abs_threshold: 3500
   direction: upper
   ms_before: 100
   ms_after: 100
   mode: linear
+  margin_ms: 500
+  lazy: true
+  before_highpass: true
 
 intermediate_save:
   enabled: true

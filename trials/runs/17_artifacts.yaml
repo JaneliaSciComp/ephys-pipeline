@@ -1,4 +1,4 @@
-trial_name: 15_check_pipeline
+trial_name: 17_artifacts
 
 description: |
   Checking with different DREDge params'
@@ -11,7 +11,7 @@ highpass:
   ftype: bessel
 
 artifact:
-  abs_threshold: 7500
+  abs_threshold: 3500
   direction: upper
   ms_before: 100
   ms_after: 100

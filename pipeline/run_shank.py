@@ -25,7 +25,7 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import SaturationArtifactRemover
+from utils.get_artifacts import SaturationArtifactRemover, merge_artifact_logs
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
@@ -80,6 +80,7 @@ def split_recording(
     shank_num: int | str,
     shank_probe: pi.Probe,
     shank_folder: Path,
+    scratch_dir: Path | None = None,
 ) -> tuple[si.BaseRecording, list[str]]:
     """Process and clean the recording for a specific shank.
 
@@ -116,23 +117,11 @@ def split_recording(
     total_recording = si.concatenate_recordings(recordings)
     total_recording.set_probe(global_probe_data)
 
-    # 1. Highpass filter and phase shift before artifact removal to avoid
-    #    filter ringing at zero-padded artifact edges
-    total_recording = si.highpass_filter(total_recording, ftype='bessel', dtype='float32')
+    # 1. Phase shift on full recording (lazy; 384 shifts indexed correctly before split)
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
 
-    # 2. Artifact removal — lazy single-pass
-    total_recording = SaturationArtifactRemover(
-        total_recording,
-        abs_threshold=1500,
-        direction="upper",
-        ms_before=150,
-        ms_after=150,
-        mode="linear",
-        margin_ms=500,
-    )
-
+    # 2. Split to shank — all further processing operates on shank channels only
     total_recording.set_property("group", global_probe_data.shank_ids)
 
     rec_split = total_recording.split_by("group")
@@ -151,13 +140,47 @@ def split_recording(
     rec = rec_split[shank_key]
     rec = rec.set_probe(shank_probe)
 
-    # 3. Intermediate save — materialise filter chain once before DREDge
-    shank_folder_tmp = Path(shank_folder) / "intermediate_cache"
+    # 3. Lazy saturation artifact removal — single pass detect+remove on raw shank data;
+    #    each chunk worker logs its detected periods to art_log_dir, merged after intermediate save.
+    art_log_dir = Path(shank_folder) / "artifact_log"
+    rec = SaturationArtifactRemover(
+        rec,
+        abs_threshold=3500,
+        direction="upper",
+        ms_before=100,
+        ms_after=100,
+        mode="linear",
+        margin_ms=500,
+        log_dir=art_log_dir,
+    )
+
+    # 4. Highpass filter on shank only
+    rec = si.highpass_filter(rec, ftype='bessel', dtype='float32')
+
+    # 5. Intermediate save — materialise filter chain once before DREDge.
+    #    Use local scratch when available, otherwise fall back to shank_folder.
+    if scratch_dir is not None:
+        cache_base = scratch_dir
+    else:
+        cache_base = Path(shank_folder)
+        print("WARNING: scratch_dir not provided — intermediate cache will write to shank_folder (network storage, slower).")
+    cache_base.mkdir(parents=True, exist_ok=True)
+    shank_folder_tmp = cache_base / "intermediate_cache"
     print("Saving intermediate cache...")
     rec = rec.save(folder=str(shank_folder_tmp), overwrite=True,
                    n_jobs=12, chunk_duration="5s")
 
-    # 4. DREDge motion correction per shank (before CMR)
+    # 6. Merge per-chunk artifact logs into artifact_periods.json
+    if art_log_dir.exists():
+        print("Merging artifact logs...")
+        merge_artifact_logs(
+            art_log_dir, fs=rec.get_sampling_frequency(),
+            output_path=Path(shank_folder) / "artifact_periods.json",
+            n_segments=rec.get_num_segments(),
+        )
+        shutil.rmtree(art_log_dir, ignore_errors=True)
+
+    # 7. DREDge motion correction per shank (before CMR)
     print("Running DREDge motion correction...")
     n_frames_before = rec.get_num_frames()
     rec = spre.correct_motion(
@@ -227,10 +250,17 @@ if __name__ == "__main__":
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
+    # Auto-detect node-local scratch when running under LSF.
+    lsb_jobid = os.environ.get("LSB_JOBID")
+    user = os.environ.get("USER") or os.environ.get("USERNAME")
+    scratch_dir = Path(f"/scratch/{user}/{lsb_jobid}") if (lsb_jobid and user) else None
+    if scratch_dir:
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+
     recording_files = collect_files(data_folder, probe_name)
     shank_recording, recording_paths = split_recording(
         recording_files, probe_name, probe_data, shank_num, shank_probe,
-        shank_folder=shank_folder,
+        shank_folder=shank_folder, scratch_dir=scratch_dir,
     )
 
     print("Saving shank recording...")
@@ -242,7 +272,8 @@ if __name__ == "__main__":
         max_workers=12,
     )
 
-    shutil.rmtree(shank_folder / "intermediate_cache", ignore_errors=True)
+    cache_base = scratch_dir if scratch_dir else shank_folder
+    shutil.rmtree(cache_base / "intermediate_cache", ignore_errors=True)
     print(f"Saved binary recording to {filename}")
     print(f"Duration: {time.time() - start_time:.1f}s")
 

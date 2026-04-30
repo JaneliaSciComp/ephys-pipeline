@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,7 +38,9 @@ from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_s
 from utils.get_artifacts import (
     SaturationArtifactRemover,
     detect_saturation_periods,
+    merge_artifact_logs,
     remove_saturation_artifacts,
+    save_artifact_periods,
 )
 from utils.probe_utils import load_probe
 
@@ -97,40 +100,13 @@ def run_sort(cfg: dict, data_dir: Path, probe: str, shank: str,
 
     raw = _load_raw(data_dir, probe, cfg.get("duration_hours", 1.0))
 
-    # ── Highpass + phase shift ───────────────────────────────────────────────
+    # ── Phase shift on full recording (lazy; 384 shifts indexed correctly before split) ──
     hp = cfg.get("highpass", {})
     rec = raw
     rec.set_probe(probe_data)
-    rec = si.highpass_filter(rec, ftype=hp.get("ftype", "bessel"), dtype="float32")
     rec = spre.phase_shift(rec, inter_sample_shift=_sample_shifts())
 
-    # ── Artifact removal ─────────────────────────────────────────────────────
-    art = cfg.get("artifact", {})
-    method    = art.get("method", "two_pass")
-    threshold = art.get("abs_threshold", 1500)
-    direction = art.get("direction", "upper")
-    ms_before = art.get("ms_before", 10.0)
-    ms_after  = art.get("ms_after", 10.0)
-    margin_ms = art.get("margin_ms", 500.0)
-
-    if method == "two_pass":
-        print("Detecting saturation periods...")
-        sat_idx = detect_saturation_periods(
-            rec, abs_threshold=threshold, direction=direction,
-            chunk_duration=chunk_duration, n_jobs=n_jobs,
-        )
-        rec = remove_saturation_artifacts(
-            rec, list_periods=sat_idx,
-            ms_before=ms_before, ms_after=ms_after, mode="linear",
-        )
-    elif method == "lazy":
-        rec = SaturationArtifactRemover(
-            rec, abs_threshold=threshold, direction=direction,
-            ms_before=ms_before, ms_after=ms_after, mode="linear",
-            margin_ms=margin_ms,
-        )
-
-    # ── Split to shank ───────────────────────────────────────────────────────
+    # ── Split to shank — all further processing on shank channels only ───────
     rec.set_property("group", probe_data.shank_ids)
     rec_split = rec.split_by("group")
     key = str(shank)
@@ -138,16 +114,91 @@ def run_sort(cfg: dict, data_dir: Path, probe: str, shank: str,
         key = int(shank)
     rec = rec_split[key].set_probe(shank_probe)
 
+    # ── Artifact removal + highpass (order configurable) ─────────────────────
+    art = cfg.get("artifact", {})
+    threshold       = art.get("abs_threshold", 1500)
+    direction       = art.get("direction", "upper")
+    ms_before       = art.get("ms_before", 150.0)
+    ms_after        = art.get("ms_after",  150.0)
+    before_highpass = art.get("before_highpass", True)
+
+    periods_path = output_dir / "artifact_periods.json"
+    use_existing = art.get("use_existing", False) and periods_path.exists()
+    lazy         = art.get("lazy", False)
+    art_log_dir  = output_dir / "artifact_log"  # populated by lazy remover, merged after intermediate save
+
+    def _detect_and_remove(r):
+        if use_existing:
+            print(f"Loading existing artifact periods from {periods_path}")
+            d = json.loads(periods_path.read_text())
+            sat_periods = []
+            for seg in d["segments"]:
+                flat = []
+                for ev in seg:
+                    flat.append(int(ev["start_frame"]))
+                    flat.append(int(ev["end_frame"]))
+                sat_periods.append(flat)
+            print(f"  {d['n_artifacts']} artifact periods ({d['total_duration_sec']:.2f}s total)")
+            return remove_saturation_artifacts(
+                r, list_periods=sat_periods,
+                ms_before=ms_before, ms_after=ms_after, mode=art.get("mode", "linear"),
+            )
+        if lazy:
+            print("Using lazy SaturationArtifactRemover (single-pass detect+remove).")
+            return SaturationArtifactRemover(
+                r, abs_threshold=threshold, direction=direction,
+                ms_before=ms_before, ms_after=ms_after, mode=art.get("mode", "linear"),
+                margin_ms=art.get("margin_ms", 500.0),
+                log_dir=art_log_dir,
+            )
+        print("Detecting saturation artifacts...")
+        sat_periods = detect_saturation_periods(
+            r, abs_threshold=threshold, direction=direction,
+            chunk_duration=chunk_duration, n_jobs=n_jobs,
+        )
+        save_artifact_periods(
+            sat_periods, r.get_sampling_frequency(), periods_path,
+        )
+        return remove_saturation_artifacts(
+            r, list_periods=sat_periods,
+            ms_before=ms_before, ms_after=ms_after, mode=art.get("mode", "linear"),
+        )
+
+    if before_highpass:
+        rec = _detect_and_remove(rec)
+        rec = si.highpass_filter(rec, ftype=hp.get("ftype", "bessel"), dtype="float32")
+    else:
+        rec = si.highpass_filter(rec, ftype=hp.get("ftype", "bessel"), dtype="float32")
+        rec = _detect_and_remove(rec)
+
     # ── Intermediate save ────────────────────────────────────────────────────
     int_save = cfg.get("intermediate_save", {})
     if int_save.get("enabled", False):
-        cache_base = scratch_dir if scratch_dir else output_dir
-        int_save_dir = cache_base / "intermediate_cache"
+        if scratch_dir is None:
+            lsb_jobid = os.environ.get("LSB_JOBID")
+            user = os.environ.get("USER") or os.environ.get("USERNAME")
+            if lsb_jobid and user:
+                scratch_dir = Path(f"/scratch/{user}/{lsb_jobid}")
+            else:
+                print("WARNING: LSB_JOBID not set — intermediate cache will write to output_dir (network storage, slower).")
+                scratch_dir = output_dir
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+        int_save_dir = scratch_dir / "intermediate_cache"
         print("Saving intermediate cache...")
         t0 = time.perf_counter()
         rec = rec.save(folder=str(int_save_dir), overwrite=True,
                        n_jobs=n_jobs, chunk_duration=chunk_duration)
         print(f"  intermediate_save: {time.perf_counter() - t0:.1f}s")
+
+        # Merge per-chunk artifact logs (only populated if lazy=true)
+        if lazy and art_log_dir.exists():
+            print("Merging artifact logs...")
+            merge_artifact_logs(
+                art_log_dir, fs=rec.get_sampling_frequency(),
+                output_path=periods_path, n_segments=rec.get_num_segments(),
+            )
+            import shutil as _sh
+            _sh.rmtree(art_log_dir, ignore_errors=True)
 
     # ── DREDge ───────────────────────────────────────────────────────────────
     dr = cfg.get("dredge", {})
@@ -158,9 +209,9 @@ def run_sort(cfg: dict, data_dir: Path, probe: str, shank: str,
         rec = spre.correct_motion(
             rec, preset=dr.get("preset", "dredge"),
             estimate_motion_kwargs={
-                "win_step_um":   dr.get("win_step_um",   100),
-                "win_scale_um":  dr.get("win_scale_um",  100),
-                "win_margin_um": dr.get("win_margin_um", -15),
+                "win_step_um":   dr.get("win_step_um",   150),
+                "win_scale_um":  dr.get("win_scale_um",  150),
+                "win_margin_um": dr.get("win_margin_um", -75),
             },
             n_jobs=n_jobs,
         )
@@ -211,7 +262,10 @@ def run_sort(cfg: dict, data_dir: Path, probe: str, shank: str,
     # ── KS4 ──────────────────────────────────────────────────────────────────
     assert probe_path is not None, "No probe exported"
     kilosort_probe = io.load_probe(probe_path)
-    settings = {"fs": fs, "n_chan_bin": c, "batch_size": 30000, "nblocks": 0}
+    ks = cfg.get("kilosort", {})
+    settings = {"fs": fs, "n_chan_bin": c,
+                "batch_size": ks.get("batch_size", 30000),
+                "nblocks":    ks.get("nblocks", 0)}
 
     print("Running Kilosort4...")
     t0 = time.perf_counter()

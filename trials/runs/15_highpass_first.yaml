@@ -1,7 +1,10 @@
-trial_name: 15_check_pipeline
+trial_name: 15_highpass_first
 
 description: |
-  Checking with different DREDge params'
+  Highpass filter BEFORE artifact detection — for comparison with trial 14
+  (which detects on raw data). Detection on filtered data may miss flat
+  saturation plateaus (which become ~0 after highpass), only catching the
+  onset/offset transients.
 
 duration_hours: 1.0
 n_jobs: 12
@@ -11,11 +14,12 @@ highpass:
   ftype: bessel
 
 artifact:
-  abs_threshold: 7500
+  abs_threshold: 1500
   direction: upper
   ms_before: 100
   ms_after: 100
   mode: linear
+  before_highpass: false
 
 intermediate_save:
   enabled: true
