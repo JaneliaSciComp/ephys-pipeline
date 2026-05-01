@@ -87,6 +87,7 @@ for probe in a b; do
          -n 12 \
          -gpu "num=1" \
          -q gpu_a100 \
+         -R "rusage[scratch=300000]" \
          -W 24:00 \
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
