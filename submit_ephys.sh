@@ -84,10 +84,9 @@ for probe in a b; do
     JOB_NAME="ks_${DIR_NAME}_${probe}_shank${shank_num}"
     echo "Submitting job: $JOB_NAME"
     submit_output="$(bsub -J "$JOB_NAME" \
-         -n 12 \
+         -n 16 \
          -gpu "num=1" \
-         -q gpu_a100 \
-         -R "rusage[scratch=300000]" \
+         -q gpu_l4_16 \
          -W 24:00 \
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
