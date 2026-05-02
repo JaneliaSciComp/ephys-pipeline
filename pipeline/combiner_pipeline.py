@@ -223,6 +223,7 @@ class  DataLoader:
         sleap_files = sorted(self.data_paths.get("sleap_files", []))
         kilosort_files = sorted(self.data_paths.get("kilosort_files", []))
         hs_files = sorted(self.data_paths.get("hs_files", []))
+        timestamp_files = sorted(self.data_paths.get("timestamp_files", []))
 
         out = {
             "npx_clocks": [None] * len(clocks),
@@ -231,6 +232,7 @@ class  DataLoader:
             "sleap": [None] * len(sleap_files),
             "kilosort": [None] * len(kilosort_files),
             "centroid": [None] * len(centroid_files),
+            "timestamp": [None] * len(timestamp_files),
             "headstage": [None] * len(hs_files),
         }
 
@@ -264,7 +266,9 @@ class  DataLoader:
         for i, f in enumerate(bno_files):
             tasks.append(("bno", i, self.load_bno_data, f))
         for i, f in enumerate(centroid_files):
-            tasks.append(("centroid", i, self.load_centroid_timestamps, f))
+            tasks.append(("centroid", i, self.load_centroid, f))
+        for i, f in enumerate(timestamp_files):
+            tasks.append(("timestamp", i, self.load_centroid, f))
         for i, f in enumerate(hs_files):
             tasks.append(("headstage", i, self.load_headstage_data, f))
 
@@ -303,18 +307,8 @@ class  DataLoader:
         data_dir = os.path.join(self.path, "data")
         sleap_dir = os.path.join(self.path, "sleap_output")
 
-        start_times =  glob.glob(os.path.join(data_dir, '*start-time*'))
-        centroid_files = glob.glob(os.path.join(data_dir, '*timestamp*'))
-
-        if len(centroid_files)  == len(start_times) * 2:
-            # this means there are top_cam_timestamps as well as centroid_timestamps; we want to filter out centroid_timestamps because those also have some processing after leading to incorrect timestamps. We want to keep top_cam_timestamps
-            centroid_files = [f for f in centroid_files if 'centroid' not in f]
-
-        if len(centroid_files) == 0:
-            centroid_files = glob.glob(os.path.join(data_dir, '*centroid*'))
-
         all_data_paths = {
-            'npx_start_times': start_times, 
+            'npx_start_times': glob.glob(os.path.join(data_dir, '*start-time*')), 
             'npx_clocks': self.get_npx_clock_paths(), 
             'kilosort_files': self.get_kilosort_paths(), 
 
@@ -322,7 +316,8 @@ class  DataLoader:
             'hs_files': glob.glob(os.path.join(data_dir, '*hs*')),
             
             'video_files': glob.glob(os.path.join(data_dir, '*video*')),
-            'centroid_files': centroid_files, 
+            'centroid_files': glob.glob(os.path.join(data_dir, '*centroid*')), 
+            'timestamp_files': glob.glob(os.path.join(data_dir, '*top_cam_timestamps*')),
             'sleap_files': glob.glob(os.path.join(sleap_dir, '*analysis*')),
             }
         
@@ -449,7 +444,7 @@ class  DataLoader:
         print(f'loaded kilosort data: {kilosort_file}') if self.verbose else None
         return spike_dict
 
-    def load_centroid_timestamps(self, file_path: str) -> pd.DataFrame:
+    def load_centroid(self, file_path: str) -> pd.DataFrame:
         print(f'loading centroid timestamps from {file_path}') if self.verbose else None
         centroid_df = pd.read_csv(file_path, header=None)
         if centroid_df.shape[1] == 1:
@@ -458,12 +453,11 @@ class  DataLoader:
         elif centroid_df.shape[1] == 3:
             centroid_df.columns = ['time','bonsai_centroid.x','bonsai_centroid.y']
             centroid_df.set_index('time', inplace=True)
-            self.centroid_has_xy = True
         else:
             raise ValueError("centroid_timestamps needs to be either 1d where it's time, or 3d where its time and centroid")
         print(f'loaded centroid timestamps: {file_path}') if self.verbose else None
         return centroid_df
-
+    
     def read_h5(self, pose_file):
         with h5py.File(pose_file, "r") as f:
             locations = f["tracks"][:].T
@@ -499,25 +493,31 @@ class  DataLoader:
     def build_processing_plan(self) -> ProcessingPlan:
         # Raw loaded lists
         sleap = self.loaded_data.get("sleap", [])
-        centroid = self.loaded_data.get("centroid", [])
         bno = self.loaded_data.get("bno", [])
         hs = self.loaded_data.get("headstage", [])
         kilosort = self.loaded_data.get("kilosort", [])
-        centroid_has_xy = bool(getattr(self, "centroid_has_xy", False))
+        timestamps = self.loaded_data.get("timestamp", [])
+        centroid = self.loaded_data.get("centroid", [])
+
+        if len(timestamps) == 0 and len(centroid) != 0:
+            # if there are no top_cam_timestamps, fallback to centroid files
+            timestamps = centroid.copy()
+
+        centroid_has_xy = len(centroid) > 0 and all(c.shape[1] >= 2 for c in centroid)
 
         pose_enabled = False
         pose_source = None
         pose_pairs: List[Tuple[Any, Any]] = []
 
         if len(sleap) > 0:
-            # hard requirement: sleap and centroid must match count
-            if len(centroid) == 0:
+            # hard requirement: if sleap exists, sleap and timestamps must match 1:1, otherwise stop and clean the directory.
+            if len(timestamps) == 0:
                 raise ValueError("Pose: SLEAP present but centroid timestamps missing.")
-            if len(sleap) != len(centroid):
-                raise ValueError(f"Pose: sleap vs centroid mismatch {len(sleap)} vs {len(centroid)}.")
+            if len(sleap) != len(timestamps):
+                raise ValueError(f"Pose: sleap vs centroid mismatch {len(sleap)} vs {len(timestamps)}.")
             pose_enabled = True
             pose_source = "sleap"
-            pose_pairs = list(zip(sleap, centroid))
+            pose_pairs = list(zip(sleap, timestamps))
 
         elif len(centroid) > 0 and centroid_has_xy:
             # centroid acts as both pose + timestamps; still require one centroid per recording
