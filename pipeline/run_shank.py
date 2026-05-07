@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -24,7 +26,7 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import detect_saturation_periods, remove_saturation_artifacts
+from utils.get_artifacts import SaturationArtifactRemover, find_stuck_channels, merge_artifact_logs
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
@@ -77,16 +79,18 @@ def split_recording(
     probe_name: str,
     global_probe_data: pi.Probe,
     shank_num: int | str,
-    shank_probe: pi.Probe,
+    shank_folder: Path,
+    scratch_dir: Path | None = None,
+    duration_s: float | None = None,
 ) -> tuple[si.BaseRecording, list[str]]:
     """Process and clean the recording for a specific shank.
 
     Args:
         recording_files (list): List of file paths for the probe.
         probe_name (str): Probe name (kept for interface compatibility).
-        global_probe_data (Probe): Probe data object with geometry details.
+        global_probe_data (Probe): Global probe with all shanks; channel_slice on
+            this drives per-shank selection and probe propagation.
         shank_num (int or str): Which shank to process.
-        shank_probe (Probe): Probe object filtered to the target shank.
 
     Returns:
         tuple: (final_rec, recording_paths) — processed RecordingExtractor
@@ -112,57 +116,86 @@ def split_recording(
         recording_paths.append(recording_file)
 
     total_recording = si.concatenate_recordings(recordings)
-    total_recording.set_probe(global_probe_data)
+    # Attach the global probe (absolute device_channel_indices straight from JSON)
+    # to the full recording. channel_slice below will then auto-slice the probe
+    # and remap indices to local positions on the per-shank sub-recording — we
+    # never touch device_channel_indices ourselves.
+    total_recording = total_recording.set_probe(global_probe_data)
 
-    # 1. Highpass filter and phase shift before artifact removal to avoid
-    #    filter ringing at zero-padded artifact edges
-    total_recording = si.highpass_filter(total_recording, ftype='bessel', dtype='float32')
+    # Optional truncation for short test runs (live runs pass duration_s=None).
+    if duration_s is not None:
+        n_frames = min(int(duration_s * SAMPLE_RATE), total_recording.get_num_frames())
+        total_recording = total_recording.frame_slice(start_frame=0, end_frame=n_frames)
+        print(f"Truncated recording to first {n_frames} samples ({n_frames / SAMPLE_RATE:.1f}s)")
+
+    # 1. Phase shift on full recording (lazy; 384 shifts indexed correctly before split)
     sample_shifts = get_sample_shifts(N_CHANNELS_PROBE)
     total_recording = spre.phase_shift(total_recording, inter_sample_shift=sample_shifts)
 
-    # 2. Artifact removal on filtered data (lower threshold, short window, linear interp)
-    print("Detecting saturation artifacts...")
-    saturation_idx = detect_saturation_periods(
-        total_recording,
-        abs_threshold=3900,
+    # 2. Slice to this shank's channels, identified by their device_channel_indices
+    #    in the global probe. select_channels preserves+remaps the attached probe.
+    shank_mask = np.asarray(global_probe_data.shank_ids).astype(str) == str(shank_num)
+    shank_channel_ids = np.asarray(global_probe_data.device_channel_indices)[shank_mask].tolist()
+    rec = total_recording.select_channels(channel_ids=shank_channel_ids)
+    print(f"Shank {shank_num} sub-recording: {rec.get_num_channels()} channels, "
+          f"channel_ids={rec.get_channel_ids()}, "
+          f"probe device_channel_indices={rec.get_probe().device_channel_indices}")
+
+    # 3. Pre-screen for chronically saturated channels so they don't poison
+    #    the per-timestep saturation detector. They're left in the data and
+    #    handled by bad-channel detection + interpolation later.
+    stuck_channels = find_stuck_channels(rec, abs_threshold=3500, direction="upper")
+    if stuck_channels:
+        print(f"Excluding {len(stuck_channels)} chronically saturated channel(s) "
+              f"from artifact detection: {stuck_channels}")
+
+    # 4. Lazy saturation artifact removal — single pass detect+remove on raw shank data;
+    #    each chunk worker logs its detected periods to art_log_dir, merged after intermediate save.
+    art_log_dir = Path(shank_folder) / "artifact_log"
+    rec = SaturationArtifactRemover(
+        rec,
+        abs_threshold=3500,
         direction="upper",
-        chunk_size=30000 * 10,
-        n_jobs=12,
-    )
-    print(saturation_idx)
-    total_recording = remove_saturation_artifacts(
-        total_recording,
-        list_periods=saturation_idx,
-        ms_before=50,
-        ms_after=50,
+        ms_before=100,
+        ms_after=100,
         mode="linear",
+        margin_ms=500,
+        log_dir=art_log_dir,
+        excluded_channels=stuck_channels,
     )
-    print("Done removing artifacts.")
 
-    total_recording.set_property("group", global_probe_data.shank_ids)
+    # 4. Highpass filter on shank only
+    rec = si.highpass_filter(rec, ftype='bessel', dtype='float32')
 
-    rec_split = total_recording.split_by("group")
-    shank_key = str(shank_num)
-    if shank_key not in rec_split:
-        try:
-            shank_key = int(shank_num)
-        except Exception:
-            pass
-    if shank_key not in rec_split:
-        raise KeyError(
-            f"Shank '{shank_num}' (key '{shank_key}') not found in split recording groups: "
-            f"{list(rec_split.keys())}"
+    # 5. Intermediate save — materialise filter chain once before DREDge.
+    #    Use local scratch when available, otherwise fall back to shank_folder.
+    if scratch_dir is not None:
+        cache_base = scratch_dir
+    else:
+        cache_base = Path(shank_folder)
+        print("WARNING: scratch_dir not provided — intermediate cache will write to shank_folder (network storage, slower).")
+    cache_base.mkdir(parents=True, exist_ok=True)
+    shank_folder_tmp = cache_base / "intermediate_cache"
+    print("Saving intermediate cache...")
+    rec = rec.save(folder=str(shank_folder_tmp), overwrite=True,
+                   n_jobs=12, chunk_duration="5s")
+
+    # 6. Merge per-chunk artifact logs into artifact_periods.json
+    if art_log_dir.exists():
+        print("Merging artifact logs...")
+        merge_artifact_logs(
+            art_log_dir, fs=rec.get_sampling_frequency(),
+            output_path=Path(shank_folder) / "artifact_periods.json",
+            n_segments=rec.get_num_segments(),
         )
+        shutil.rmtree(art_log_dir, ignore_errors=True)
 
-    rec = rec_split[shank_key]
-    rec = rec.set_probe(shank_probe)
-
-    # 3. DREDge motion correction per shank (before CMR)
+    # 7. DREDge motion correction per shank (before CMR)
     print("Running DREDge motion correction...")
     n_frames_before = rec.get_num_frames()
     rec = spre.correct_motion(
         rec, preset="dredge",
-        estimate_motion_kwargs={"win_step_um": 100, "win_scale_um": 100, "win_margin_um": -15},
+        estimate_motion_kwargs={"win_step_um": 150, "win_scale_um": 150, "win_margin_um": -75},
         n_jobs=12,
     )
     if rec.get_num_frames() != n_frames_before:
@@ -202,29 +235,34 @@ def split_recording(
 
 
 if __name__ == "__main__":
-    folder = Path(sys.argv[1])
-    probe = sys.argv[2]
-    shank_num = sys.argv[3]
+    parser = argparse.ArgumentParser(description="Spike-sort one probe/shank with Kilosort4.")
+    parser.add_argument("folder", type=Path, help="Day directory containing data/ and output/.")
+    parser.add_argument("probe", choices=["a", "b"])
+    parser.add_argument("shank_num", choices=["0", "1", "2", "3"])
+    parser.add_argument("--duration_s", type=float, default=None,
+                        help="If set, truncate concatenated recording to first N seconds (test runs).")
+    parser.add_argument("--output_subdir", type=str, default="output",
+                        help="Subdirectory of folder for outputs (default: output).")
+    args = parser.parse_args()
+
+    folder = args.folder
+    probe = args.probe
+    shank_num = args.shank_num
+    duration_s = args.duration_s
 
     data_folder = folder / "data"
-    output_folder = folder / "output"
+    output_folder = folder / args.output_subdir
     probe_name = f"np2-{probe}-ephys"
 
     probe_file = folder / f"{probe}_probe_conf.json"
     probe_data, _ = load_probe(probe_file)
-    shank_probe, N_CHANNELS_SHANK = load_probe(probe_file, shank_num)
+    _, N_CHANNELS_SHANK = load_probe(probe_file, shank_num)
 
     if N_CHANNELS_SHANK is None or N_CHANNELS_SHANK == 0:
         print(f"ERROR: Shank {shank_num} has zero channels. Exiting without processing.")
         sys.exit(1)
 
     print(f"n_channels_shank: {N_CHANNELS_SHANK} (extracted from JSON)")
-    print(shank_probe)
-
-    recording_files = collect_files(data_folder, probe_name)
-    shank_recording, recording_paths = split_recording(
-        recording_files, probe_name, probe_data, shank_num, shank_probe
-    )
 
     output_folder.mkdir(parents=True, exist_ok=True)
     probe_folder = output_folder / probe
@@ -232,14 +270,31 @@ if __name__ == "__main__":
     shank_folder = probe_folder / f"shank_{shank_num}"
     shank_folder.mkdir(parents=True, exist_ok=True)
 
+    # Auto-detect node-local scratch when running under LSF.
+    lsb_jobid = os.environ.get("LSB_JOBID")
+    user = os.environ.get("USER") or os.environ.get("USERNAME")
+    scratch_dir = Path(f"/scratch/{user}/{lsb_jobid}") if (lsb_jobid and user) else None
+    if scratch_dir:
+        scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    recording_files = collect_files(data_folder, probe_name)
+    shank_recording, recording_paths = split_recording(
+        recording_files, probe_name, probe_data, shank_num,
+        shank_folder=shank_folder, scratch_dir=scratch_dir,
+        duration_s=duration_s,
+    )
+
     print("Saving shank recording...")
     start_time = time.time()
 
     filename, N, c, s, fs, probe_path = io.spikeinterface_to_binary(
         shank_recording, shank_folder, data_name='shank_recording.bin', dtype=np.int16,
-        chunksize=30000 * 8, export_probe=True, probe_name='probe.prb',
+        chunksize=30000 * 5, export_probe=True, probe_name='probe.prb',
         max_workers=12,
     )
+
+    cache_base = scratch_dir if scratch_dir else shank_folder
+    shutil.rmtree(cache_base / "intermediate_cache", ignore_errors=True)
     print(f"Saved binary recording to {filename}")
     print(f"Duration: {time.time() - start_time:.1f}s")
 
@@ -249,7 +304,19 @@ if __name__ == "__main__":
     print(shank_recording.get_total_duration())
     print("Running Kilosort...")
 
-    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000, 'nblocks': 0}
+    # Skip past any leading saturation artifact so Kilosort's universal-template
+    # init doesn't read a zeroed window. Reads artifact_periods.json (segment 0)
+    # and shifts tmin past any period starting at t=0.
+    tmin = 0.0
+    artifact_path = shank_folder / "artifact_periods.json"
+    if artifact_path.exists():
+        with open(artifact_path) as f:
+            seg0 = json.load(f).get("segments", [[]])[0]
+        if seg0 and seg0[0]["start_sec"] == 0.0:
+            tmin = seg0[0]["end_sec"] + 1.0  # 1 s buffer past the artifact
+            print(f"Leading artifact detected ending at {seg0[0]['end_sec']:.2f}s — setting Kilosort tmin={tmin:.2f}s")
+
+    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000, 'nblocks': 0, 'tmin': tmin}
 
     ops, st, clu, tF, Wall, similar_templates, is_ref, \
         est_contam_rate, kept_spikes = run_kilosort(

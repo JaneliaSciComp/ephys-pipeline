@@ -18,7 +18,6 @@ import spikeinterface as si
 import spikeinterface.extractors as se
 import spikeinterface.curation as sc
 import probeinterface as pi
-from utils.probe_utils import load_probe
 
 # Constants
 SAMPLE_RATE = 30000
@@ -26,29 +25,36 @@ N_CHANNELS_PROBE = 384
 
 def load_recording_and_sorting(
     shank_folder: Path,
-    probe: pi.Probe,
-    n_channels_shank: int,
 ) -> tuple[si.BaseRecording, si.BaseSorting]:
     """
     Load recording and sorting from run_shank.py output.
-    
+
+    Reads the per-shank probe.prb that run_shank.py wrote alongside the binary
+    via spikeinterface_to_binary — its device_channel_indices are already local
+    to the saved binary, so no remap is needed.
+
     Args:
         shank_folder: Path to shank output folder
-        probe: ProbeInterface probe object
-        n_channels_shank: Number of channels in the shank
-        
+
     Returns:
         recording: SpikeInterface recording object
         sorting: SpikeInterface sorting object
     """
     recording_path = shank_folder / 'shank_recording.bin'
     sorting_path = shank_folder / 'kilosort4'
-    
+    probe_path = shank_folder / 'probe.prb'
+
     if not recording_path.exists():
         raise FileNotFoundError(f"Recording file not found: {recording_path}")
     if not sorting_path.exists():
         raise FileNotFoundError(f"Sorting folder not found: {sorting_path}")
-    
+    if not probe_path.exists():
+        raise FileNotFoundError(f"Probe file not found: {probe_path}")
+
+    probegroup = pi.read_prb(str(probe_path))
+    probe = probegroup.probes[0]
+    n_channels_shank = probe.get_contact_count()
+
     print(f"Loading recording from {recording_path}")
     recording = se.read_binary(
         file_paths=str(recording_path),
@@ -59,10 +65,10 @@ def load_recording_and_sorting(
         gain_to_uV=1.0
     )
     recording = recording.set_probe(probe)
-    
+
     print(f"Loading sorting from {sorting_path}")
     sorting = se.read_phy(folder_path=str(sorting_path))
-    
+
     return recording, sorting
 
 def load_sorting_analyzer(analyzer_path: Path) -> si.SortingAnalyzer:
@@ -260,6 +266,10 @@ if __name__ == "__main__":
     parser.add_argument("folder", type=Path, help="Base folder containing data and output directories.")
     parser.add_argument("probe", choices=["a", "b"], help="Probe letter.")
     parser.add_argument("shank_num", choices=["0", "1", "2", "3"], help="Shank number.")
+    parser.add_argument("--shank_folder", type=Path, default=None,
+                        help="Override shank folder path directly (e.g. for trial outputs).")
+    parser.add_argument("--output_subdir", type=str, default="output",
+                        help="Subdirectory of folder for outputs (default: output).")
     args = parser.parse_args()
 
     folder = args.folder
@@ -273,11 +283,13 @@ if __name__ == "__main__":
     ]
     
     # Set up paths
-    output_folder = folder / "output"
-    probe_folder = output_folder / probe
-    shank_folder = probe_folder / f"shank_{shank_num}"
-    probe_file = folder / f"{probe}_probe_conf.json"
-    
+    if args.shank_folder is not None:
+        shank_folder = args.shank_folder
+    else:
+        output_folder = folder / args.output_subdir
+        probe_folder = output_folder / probe
+        shank_folder = probe_folder / f"shank_{shank_num}"
+
     print(f"Post-processing shank {shank_num} for probe {probe}")
     print(f"Folder: {folder}")
     print(f"Shank folder: {shank_folder}")
@@ -285,18 +297,9 @@ if __name__ == "__main__":
     for model in models_to_run:
         print(f"  - {model}")
     
-    # Load probe configuration
-    print(f"\nLoading probe configuration from {probe_file}")
-    shank_probe, n_channels_shank = load_probe(probe_file, shank_num)
-    
-    if n_channels_shank is None or n_channels_shank == 0:
-        print(f"ERROR: Shank {shank_num} has zero channels. Exiting.")
-        sys.exit(1)
-    
-    print(f"Number of channels in shank: {n_channels_shank}")
-    
-    # Load recording and sorting
-    recording, sorting = load_recording_and_sorting(shank_folder, shank_probe, n_channels_shank)
+    # Load recording, sorting, and probe (probe.prb saved by run_shank.py).
+    recording, sorting = load_recording_and_sorting(shank_folder)
+    print(f"Number of channels in shank: {recording.get_num_channels()}")
     
     print(f"Recording: {recording.get_num_channels()} channels, "
             f"{recording.get_total_duration():.2f} seconds")

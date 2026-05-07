@@ -84,15 +84,15 @@ for probe in a b; do
     JOB_NAME="ks_${DIR_NAME}_${probe}_shank${shank_num}"
     echo "Submitting job: $JOB_NAME"
     submit_output="$(bsub -J "$JOB_NAME" \
-         -n 12 \
+         -n 16 \
          -gpu "num=1" \
-         -q gpu_a100 \
+         -q gpu_l4_16 \
          -W 24:00 \
          -N -u "$email" \
          -oo "$DAY_DIR/output/${JOB_NAME}.%J.out" \
          -eo "$DAY_DIR/output/${JOB_NAME}.%J.err" \
-         apptainer exec --nv --bind /groups "$SPIKENV_SIF" \
-             python "$SCRIPT_DIR/run_pipeline.py" "$DAY_DIR" "$probe" "$shank_num")"
+         apptainer exec --nv --bind /groups --bind /scratch "$SPIKENV_SIF" \
+             python -s "$SCRIPT_DIR/run_pipeline.py" "$DAY_DIR" "$probe" "$shank_num")"
     printf '%s\n' "$submit_output"
 
     job_id="$(extract_job_id "$submit_output")" || {
