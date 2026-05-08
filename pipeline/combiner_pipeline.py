@@ -218,12 +218,14 @@ class  DataLoader:
 
         clocks = sorted(self.data_paths.get("npx_clocks", []))
         start_times = sorted(self.data_paths.get("npx_start_times", []))
-        bno_files = sorted(self.data_paths.get("bno_files", []))
-        centroid_files = sorted(self.data_paths.get("centroid_files", []))
-        sleap_files = sorted(self.data_paths.get("sleap_files", []))
         kilosort_files = sorted(self.data_paths.get("kilosort_files", []))
-        hs_files = sorted(self.data_paths.get("hs_files", []))
+        
+        centroid_files = sorted(self.data_paths.get("centroid_files", []))
         timestamp_files = sorted(self.data_paths.get("timestamp_files", []))
+        sleap_files = sorted(self.data_paths.get("sleap_files", []))
+
+        bno_files = sorted(self.data_paths.get("bno_files", []))
+        hs_files = sorted(self.data_paths.get("hs_files", []))
 
         out = {
             "npx_clocks": [None] * len(clocks),
@@ -268,7 +270,7 @@ class  DataLoader:
         for i, f in enumerate(centroid_files):
             tasks.append(("centroid", i, self.load_centroid, f))
         for i, f in enumerate(timestamp_files):
-            tasks.append(("timestamp", i, self.load_centroid, f))
+            tasks.append(("timestamp", i, self.load_video_timestamps, f))
         for i, f in enumerate(hs_files):
             tasks.append(("headstage", i, self.load_headstage_data, f))
 
@@ -306,10 +308,6 @@ class  DataLoader:
     def get_all_data_paths(self,):
         data_dir = os.path.join(self.path, "data")
         sleap_dir = os.path.join(self.path, "sleap_output")
-
-        centroid_files = glob.glob(os.path.join(data_dir, '*centroid_absolutevalue*'))
-        if len(centroid_files) == 0:
-            centroid_files = glob.glob(os.path.join(data_dir, '*centroid*'))
 
         all_data_paths = {
             'npx_start_times': glob.glob(os.path.join(data_dir, '*start-time*')), 
@@ -460,6 +458,17 @@ class  DataLoader:
         print(f'loaded centroid timestamps: {file_path}') if self.verbose else None
         return centroid_df
     
+    def load_video_timestamps(self, file_path: str) -> pd.DataFrame:
+        print(f'loading video timestamps from {file_path}') if self.verbose else None
+        video_df = pd.read_csv(file_path, header=None)
+        if video_df.shape[1] == 1:
+            video_df.columns = ['time']
+            video_df.set_index('time', inplace=True)
+        else:
+            raise ValueError("video_timestamps needs to be 1d where it's time")
+        print(f'loaded video timestamps: {file_path}') if self.verbose else None
+        return video_df
+
     def read_h5(self, pose_file):
         with h5py.File(pose_file, "r") as f:
             locations = f["tracks"][:].T
