@@ -1,3 +1,18 @@
+# ---
+# jupyter:
+#   jupytext:
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.16.7
+#   kernelspec:
+#     display_name: base
+#     language: python
+#     name: python3
+# ---
+
+# %%
 from __future__ import annotations
 
 import cv2
@@ -29,35 +44,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 plt.ioff()
 
-@dataclass(frozen=True)
-class TaskSpec:
-    tag: str                      # e.g. "pose", "bno", "neural"
-    idx: int
-    fn: Callable
-    args: Tuple[Any, ...]
+try: 
+    from .pose_cleaner import PoseCleaner
+except ImportError:
+    from pose_cleaner import PoseCleaner
 
-@dataclass(frozen=True)
-class PosePlan:
-    enabled: bool
-    source: Optional[str]         # "sleap" | "centroid_xy" | None
-    pairs: List[Tuple[Any, Any]]  # list of (pose_df, centroid_df)
-
-@dataclass(frozen=True)
-class BnoPlan:
-    enabled: bool
-    pairs: List[Tuple[Any, Any]]  # list of (bno_df, headstage_df)
-
-@dataclass(frozen=True)
-class NeuralPlan:
-    enabled: bool
-    items: List[Any]              # kilosort dicts
-
-@dataclass(frozen=True)
-class ProcessingPlan:
-    pose: PosePlan
-    bno: BnoPlan
-    neural: NeuralPlan
-
+# %%
 class StreamToLogger:
     def __init__(self, logger, level):
         self.logger = logger
@@ -81,101 +73,8 @@ class StreamToLogger:
             self.logger.log(self.level, line)
         self._buffer = ""
 
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    v = v.strip().lower()
-    if v in {"true", "t", "1", "yes", "y"}:
-        return True
-    if v in {"false", "f", "0", "no", "n"}:
-        return False
-    raise argparse.ArgumentTypeError(f"Invalid boolean value: {v}")
 
-def _is_windows_drive_path(path: str) -> bool:
-    return bool(re.match(r"^[A-Za-z]:[\\/]", path))
-
-def _is_wsl() -> bool:
-    if platform.system().lower() != "linux":
-        return False
-    return (
-        "microsoft" in platform.release().lower()
-        or "microsoft" in platform.version().lower()
-        or bool(os.environ.get("WSL_DISTRO_NAME"))
-    )
-
-def _split_path_parts(path: str) -> List[str]:
-    return [p for p in re.split(r"[\\/]+", path) if p]
-
-def _recording_id_from_path(path: str) -> str:
-    parts = _split_path_parts(path)
-    if len(parts) >= 2:
-        return "_".join(parts[-2:])
-    if len(parts) == 1:
-        return parts[0]
-    return ""
-
-def _parse_kilosort_dir(path: str) -> Tuple[str, Optional[str]]:
-    parts = _split_path_parts(path.replace("\\", "/"))
-    if len(parts) < 2:
-        raise ValueError(f"Malformed kilosort path (too short): {path}")
-
-    ks_dir = parts[-1].lower()
-    if not ks_dir.startswith("kilosort"):
-        raise ValueError(f"Malformed kilosort path (expected trailing kilosort directory): {path}")
-
-    parent = parts[-2]
-    if "shank" in parent.lower():
-        if len(parts) < 3:
-            raise ValueError(f"Malformed shank kilosort path (missing probe directory): {path}")
-        return parts[-3], parent
-
-    return parent, None
-
-def windows_to_ubuntu_path(win_path: str) -> str:
-    win = PureWindowsPath(win_path)
-    drive = win.drive.rstrip(":").lower()           
-    parts = win.parts[1:]                            
-    path = str(PurePosixPath("/mnt", drive, *parts,))
-    return path
-
-def normalize_path(raw_path: str) -> str:
-    """
-    Normalize user-provided paths across Windows and WSL/Linux hosts:
-    - On Windows: keep Windows paths as-is.
-    - On WSL: convert Windows drive paths (e.g., V:\\...) to /mnt/v/... .
-    - Otherwise: leave non-Windows paths as-is.
-    """
-    if raw_path is None:
-        raise ValueError("Path cannot be None")
-
-    raw_path = str(raw_path)
-    system = platform.system().lower()
-
-    if system == "windows":
-        path = raw_path
-    else:
-        path = windows_to_ubuntu_path(raw_path) if _is_wsl() and _is_windows_drive_path(raw_path) else raw_path
-
-    return os.path.normpath(path)
-
-def get_columns(df, search_str, method='contains', exclude=None):
-    if method == 'startswith':
-        cols = df.columns[df.columns.str.startswith(search_str)]
-    elif method == 'contains':
-        cols = df.columns[df.columns.str.contains(search_str)]
-    else:
-        raise ValueError("method must be 'startswith' or 'contains'")
-    
-    if exclude is not None:
-        if isinstance(exclude, str):
-            exclude = [exclude]
-        for word in exclude:
-            cols = [c for c in cols if word not in c]
-
-    df_cols = df[cols]
-    return df_cols
-
-def setup_logger(log_file: str, verbose: bool) -> logging.Logger:
+def setup_logger(log_file: str, verbose: bool = True) -> logging.Logger:
     logger = logging.getLogger("maze")
     logger.setLevel(logging.DEBUG)      
     logger.propagate = False               
@@ -198,37 +97,51 @@ def setup_logger(log_file: str, verbose: bool) -> logging.Logger:
 
     return logger
 
+def get_columns(df, search_str, method='contains', exclude=None):
+    if method == 'startswith':
+        cols = df.columns[df.columns.str.startswith(search_str)]
+    elif method == 'contains':
+        cols = df.columns[df.columns.str.contains(search_str)]
+    else:
+        raise ValueError("method must be 'startswith' or 'contains'")
+    
+    if exclude is not None:
+        if isinstance(exclude, str):
+            exclude = [exclude]
+        for word in exclude:
+            cols = [c for c in cols if word not in c]
 
+    df_cols = df[cols]
+    return df_cols
+
+
+# %%
 class  DataLoader:
-    config: dict[str,Any]
-    verbose: bool
-    output_path: str
-
     def __init__(self, config: dict[str,Any]):
-        self.path = normalize_path(config.get('path'))
         self.config = config
-        self.config['tick_res'] = config.get('tick_res', 2.5e8)
+        self.path = config.get('path')
         self.verbose = config.get('verbose', True)
-        self.recording_id = _recording_id_from_path(self.path)
-        self.output_path = normalize_path(config.get('output_path'))
+        self.recording = config.get('recording')
+        self.output_path = config.get('output_path')
+        self.config['tick_res'] = config.get('tick_res', 2.5e8)
  
     def load_all_data(self, max_workers=4):
         if not hasattr(self, "data_paths"):
             _ = self.get_all_data_paths()
 
-        clocks = sorted(self.data_paths.get("npx_clocks", []))
-        start_times = sorted(self.data_paths.get("npx_start_times", []))
-        kilosort_files = sorted(self.data_paths.get("kilosort_files", []))
+        npx_clocks = self.data_paths.get("npx_clocks", [])
+        start_times = self.data_paths.get("npx_start_times", [])
+        kilosort_files = self.data_paths.get("kilosort_files", [])
         
-        centroid_files = sorted(self.data_paths.get("centroid_files", []))
-        timestamp_files = sorted(self.data_paths.get("timestamp_files", []))
-        sleap_files = sorted(self.data_paths.get("sleap_files", []))
+        centroid_files = self.data_paths.get("centroid_files", [])
+        timestamp_files = self.data_paths.get("timestamp_files", [])
+        sleap_files = self.data_paths.get("sleap_files", [])    
 
-        bno_files = sorted(self.data_paths.get("bno_files", []))
-        hs_files = sorted(self.data_paths.get("hs_files", []))
+        bno_files = self.data_paths.get("bno_files", [])
+        hs_files = self.data_paths.get("hs_files", [])
 
         out = {
-            "npx_clocks": [None] * len(clocks),
+            "npx_clocks": [None] * len(npx_clocks),
             "npx_start_times": [None] * len(start_times),
             "bno": [None] * len(bno_files),
             "sleap": [None] * len(sleap_files),
@@ -257,22 +170,28 @@ class  DataLoader:
                 return tag, idx, None, err
 
         tasks = []
+        # neural stuff
         for i, f in enumerate(kilosort_files):
             tasks.append(("kilosort", i, self.load_kilosort_data, f))      
-        for i, f in enumerate(clocks):
+        for i, f in enumerate(npx_clocks):
             tasks.append(("npx_clocks", i, self.load_npx_clock, f))
         for i, f in enumerate(start_times):
             tasks.append(("npx_start_times", i, self.load_npx_start_time, f))
-        for i, f in enumerate(sleap_files):
-            tasks.append(("sleap", i, self.load_sleap_data, f))
+
+        # bno
         for i, f in enumerate(bno_files):
             tasks.append(("bno", i, self.load_bno_data, f))
+        for i, f in enumerate(hs_files):
+            tasks.append(("headstage", i, self.load_headstage_data, f))
+
+        # sleap, timestamps and centroids
+        for i, f in enumerate(sleap_files):
+            tasks.append(("sleap", i, self.load_sleap_data, f))
         for i, f in enumerate(centroid_files):
             tasks.append(("centroid", i, self.load_centroid, f))
         for i, f in enumerate(timestamp_files):
             tasks.append(("timestamp", i, self.load_video_timestamps, f))
-        for i, f in enumerate(hs_files):
-            tasks.append(("headstage", i, self.load_headstage_data, f))
+
 
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futures = [
@@ -301,14 +220,12 @@ class  DataLoader:
                 self.data_exists[data] = True
         print('====================================================')
 
-        self.build_processing_plan()        
         return out, errors
 
 ###### GET PATHS #######
     def get_all_data_paths(self,):
         data_dir = os.path.join(self.path, "data")
-        sleap_dir = os.path.join(self.path, "sleap_output")
-
+        
         all_data_paths = {
             'npx_start_times': glob.glob(os.path.join(data_dir, '*start-time*')), 
             'npx_clocks': self.get_npx_clock_paths(), 
@@ -317,10 +234,10 @@ class  DataLoader:
             'bno_files': glob.glob(os.path.join(data_dir, '*bno055*')), 
             'hs_files': glob.glob(os.path.join(data_dir, '*hs*')),
             
-            'video_files': glob.glob(os.path.join(data_dir, '*video*')),
+            'video_files': glob.glob(os.path.join(data_dir, '*compressed*')),
             'centroid_files': glob.glob(os.path.join(data_dir, '*centroid*')), 
-            'timestamp_files': glob.glob(os.path.join(data_dir, '*top_cam_timestamps*')),
-            'sleap_files': glob.glob(os.path.join(sleap_dir, '*analysis*')),
+            'timestamp_files': glob.glob(os.path.join(data_dir, '*timestamps*')),
+            'sleap_files': glob.glob(os.path.join(self.path, '*sleap*', '*analysis*')), # since we might have multiple sleap dirs
             }
         
         self.data_paths = all_data_paths
@@ -342,32 +259,26 @@ class  DataLoader:
         return npx_clocks
     
     def get_kilosort_paths(self,):
-        ks_dir = glob.glob(os.path.join(self.path, 'output', '*'))
+        ks_dir = glob.glob(os.path.join(self.config['path'], 'output', '*'))
         ks_probe_dir_list = [d for d in ks_dir if os.path.isdir(d)]
 
-        if len(ks_probe_dir_list) == 0:
-            warnings.warn('No probe directories found in the output folder.')
-            return []
-
         shank_dirs = np.array([glob.glob(os.path.join(probe_dir, '*shank*', 'kilosort4')) for probe_dir in ks_probe_dir_list], dtype=object)
-        probe_kilosort_dirs = np.array([glob.glob(os.path.join(probe_dir, 'kilosort4')) for probe_dir in ks_probe_dir_list], dtype=object)
 
         if len(shank_dirs.flatten()) > 0:
-            self.sorting = 'shank'
-            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in shank_dirs.flatten().tolist()])
             return shank_dirs.flatten().tolist()
 
-        elif len(probe_kilosort_dirs.flatten()) > 0:
-            self.sorting = 'probe'
-            self.kilosort_probes = np.unique([_parse_kilosort_dir(d)[0] for d in probe_kilosort_dirs.flatten().tolist()])
-            return probe_kilosort_dirs.flatten().tolist()
-    
         else: 
             raise ValueError('No kilosort directories found in the output folder.')
         
 
 ####### LOADERS #######
-
+    def is_datetime_col(self, val):
+        try:
+            pd.to_datetime(val)
+            return True
+        except:
+            return False
+        
     def load_npx_clock(self, clock_file):
         # # below loads quick but becomes slow when dividing by tick_res later
         # mm = np.memmap(clock_file, dtype=np.uint64, mode='r')
@@ -404,7 +315,7 @@ class  DataLoader:
         return hs
         
     def load_kilosort_data(self, kilosort_file): 
-        probe_name, shank_name = _parse_kilosort_dir(kilosort_file)
+        probe_name,shank_name = kilosort_file.split('/')[-3], kilosort_file.split('/')[-2]
 
         if shank_name is not None:
             spike_dict_name = f'probe_{probe_name}_{shank_name}'
@@ -447,27 +358,38 @@ class  DataLoader:
     def load_centroid(self, file_path: str) -> pd.DataFrame:
         print(f'loading centroid timestamps from {file_path}') if self.verbose else None
         centroid_df = pd.read_csv(file_path, header=None)
+
         if centroid_df.shape[1] == 1:
             centroid_df.columns = ['time']
-            centroid_df.set_index('time', inplace=True)
+
+        elif centroid_df.shape[1] == 2:
+            centroid_df.columns = ['bonsai_centroid.x','bonsai_centroid.y']
+
         elif centroid_df.shape[1] == 3:
-            centroid_df.columns = ['time','bonsai_centroid.x','bonsai_centroid.y']
-            centroid_df.set_index('time', inplace=True)
+            column_num = next((c for c in centroid_df.columns if self.is_datetime_col(centroid_df[c].iloc[0])), None)
+
+            centroid_df = centroid_df.set_index(centroid_df.columns[column_num])   
+            centroid_df.index.name = 'time'
+            
+            centroid_df.columns = ['bonsai_centroid.x','bonsai_centroid.y']
+
         else:
             raise ValueError("centroid_timestamps needs to be either 1d where it's time, or 3d where its time and centroid")
+        
         print(f'loaded centroid timestamps: {file_path}') if self.verbose else None
         return centroid_df
     
     def load_video_timestamps(self, file_path: str) -> pd.DataFrame:
-        print(f'loading video timestamps from {file_path}') if self.verbose else None
-        video_df = pd.read_csv(file_path, header=None)
-        if video_df.shape[1] == 1:
-            video_df.columns = ['time']
-            video_df.set_index('time', inplace=True)
-        else:
-            raise ValueError("video_timestamps needs to be 1d where it's time")
-        print(f'loaded video timestamps: {file_path}') if self.verbose else None
-        return video_df
+        ts = pd.read_csv(file_path, header=None)
+
+        column_num = next((c for c in ts.columns if self.is_datetime_col(ts[c].iloc[0])), None)
+
+        if column_num is None:
+            raise ValueError("File named timestamp whereas there seem to be none in here.")
+
+        ts_df = ts.set_index(ts.columns[column_num])   
+        ts_df.index.name = 'time'
+        return ts_df
 
     def read_h5(self, pose_file):
         with h5py.File(pose_file, "r") as f:
@@ -476,8 +398,8 @@ class  DataLoader:
             point_scores = f["point_scores"][:].T
 
             if locations.shape[-1] != 1: 
-                locations = np.nansum(locations,axis=-1)[..., np.newaxis]
-                point_scores = np.nansum(point_scores,axis=-1)[..., np.newaxis]
+                locations = np.nanmean(locations,axis=-1)[..., np.newaxis]
+                point_scores = np.nanmean(point_scores,axis=-1)[..., np.newaxis]
                 
             return locations, node_names, point_scores
 
@@ -494,109 +416,14 @@ class  DataLoader:
 
         print(f'loaded sleap data: {pose_file}') if self.verbose else None
         return pose_df
-    
 
-###### BUILD PROCESSING PLAN #######
-    def _expected(self, key: str) -> bool:
-            """Convenience accessor for config expectations."""
-            return bool(self.config.get("config_data_exists", {}).get(key, False))    
-
-    def build_processing_plan(self) -> ProcessingPlan:
-        # Raw loaded lists
-        sleap = self.loaded_data.get("sleap", [])
-        bno = self.loaded_data.get("bno", [])
-        hs = self.loaded_data.get("headstage", [])
-        kilosort = self.loaded_data.get("kilosort", [])
-        timestamps = self.loaded_data.get("timestamp", [])
-        centroid = self.loaded_data.get("centroid", [])
-
-        if len(timestamps) == 0 and len(centroid) != 0:
-            # if there are no top_cam_timestamps, fallback to centroid files
-            timestamps = centroid.copy()
-
-        centroid_has_xy = len(centroid) > 0 and all(c.shape[1] >= 2 for c in centroid)
-
-        pose_enabled = False
-        pose_source = None
-        pose_pairs: List[Tuple[Any, Any]] = []
-
-        if len(sleap) > 0:
-            # hard requirement: if sleap exists, sleap and timestamps must match 1:1, otherwise stop and clean the directory.
-            if len(timestamps) == 0:
-                raise ValueError("Pose: SLEAP present but centroid timestamps missing.")
-            if len(sleap) != len(timestamps):
-                raise ValueError(f"Pose: sleap vs centroid mismatch {len(sleap)} vs {len(timestamps)}.")
-            pose_enabled = True
-            pose_source = "sleap"
-            pose_pairs = list(zip(sleap, timestamps))
-
-        elif len(centroid) > 0 and centroid_has_xy:
-            # centroid acts as both pose + timestamps; still require one centroid per recording
-            pose_enabled = True
-            pose_source = "centroid_xy"
-            pose_pairs = [(c, c) for c in centroid]
-
-        else:
-            # no pose processing at all
-            pose_enabled = False
-            pose_source = None
-            pose_pairs = []
-
-        # if "expected pose" flag, enforce 
-        if self._expected("sleap") and not pose_enabled:
-            raise ValueError("Config expects pose, but neither SLEAP nor centroid XY is available.")
-
-        # ---------- BNO PLAN ----------
-        # BNO requires both bno and headstage; lengths must match; otherwise stop.
-        bno_enabled = False
-        bno_pairs: List[Tuple[Any, Any]] = []
-
-        if self._expected("bno"):
-            if len(bno) == 0 or len(hs) == 0:
-                raise ValueError(f"BNO expected but missing (bno={len(bno)}, headstage={len(hs)}).")
-            if len(bno) != len(hs):
-                raise ValueError(f"BNO vs headstage mismatch {len(bno)} vs {len(hs)}.")
-            bno_enabled = True
-            bno_pairs = list(zip(bno, hs))
-        else:
-            if len(bno) and len(hs):
-                if len(bno) != len(hs):
-                    raise ValueError(f"BNO vs headstage mismatch {len(bno)} vs {len(hs)}.")
-                bno_enabled = True
-                bno_pairs = list(zip(bno, hs))
-
-        neural_enabled = False
-        neural_items: List[Any] = []
-        valid_kilosort = [ks for ks in kilosort if ks is not None]
-
-        if self._expected("neural"):
-            if len(valid_kilosort) == 0:
-                raise ValueError("Neural expected but no valid kilosort datasets were loaded.")
-            neural_enabled = True
-            neural_items = valid_kilosort
-        else:
-            if len(valid_kilosort) > 0:
-                neural_enabled = True
-                neural_items = valid_kilosort
-
-        self.processing_plan = ProcessingPlan(
-            pose=PosePlan(enabled=pose_enabled, source=pose_source, pairs=pose_pairs),
-            bno=BnoPlan(enabled=bno_enabled, pairs=bno_pairs),
-            neural=NeuralPlan(enabled=neural_enabled, items=neural_items),
-        )
-        return self.processing_plan   
-
-from dataclasses import dataclass
-
-@dataclass
+# %%
 class DataProcessor:
-    loader: DataLoader
-    verbose: bool = True
-    save_raw: bool = True
-
-    def __post_init__(self):
-        self.verbose = self.loader.verbose
-        self.save_raw = self.loader.config.get('save_raw', True)
+    def __init__(self, loader: DataLoader):
+        self.loader = loader
+        self.save_raw = loader.config.get('save_raw', True)
+        self.verbose = loader.verbose
+        self.pose_cleaner = PoseCleaner(loader, verbose=self.verbose)
 
     def create_timeline(self):
         _ = self.get_all_timestamps()
@@ -641,8 +468,8 @@ class DataProcessor:
 
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             futures = [
-                ex.submit(_safe_call, t.tag, t.idx, t.fn, *t.args)
-                for t in tasks
+                ex.submit(_safe_call, tag, idx, fn, *args)
+                for (tag, idx, fn, args) in tasks
             ]
 
             for fut in as_completed(futures):
@@ -655,22 +482,29 @@ class DataProcessor:
         self.processed_data = out
         self.errors = errors
 
-        print('=============== Data loading summary ===============') if self.verbose else None
+        print('=============== Data processing summary ===============') if self.verbose else None
         self.data_exists = {}
         for data in list(self.processed_data.keys()):
             if len(self.processed_data[data]) == 0:
-                print(f'No data loaded for {data}!') if self.verbose else None
+                print(f'No data processed for {data}!') if self.verbose else None
                 self.data_exists[data] = False
             else:
-                print(f'Loaded {len(self.processed_data[data])} items for {data}.') if self.verbose else None
+                print(f'Processed {len(self.processed_data[data])} items for {data}.') if self.verbose else None
                 self.data_exists[data] = True
         print('====================================================') if self.verbose else None
-        
+
+        try:
+            self.tests(out)
+        except:
+            warnings.warn("Error during testing the processed data: " + traceback.format_exc())
+
         main_dataframe = self.join_all_data(out)
+
+        assert len(main_dataframe) == len(self.timeline), "Final dataframe length does not match timeline length!"
 
         # postprocess 
         final_dataframe = self.postprocess_dataframe(main_dataframe)
-        final_parquet_path = os.path.join(self.loader.output_path, f'final_df_{self.loader.recording_id}.parquet')
+        final_parquet_path = os.path.join(self.loader.output_path, f'final_df_{self.loader.recording}.parquet')
         print(f'saving final dataframe to parquet at \n {final_parquet_path}') if self.verbose else None
         final_dataframe.to_parquet(final_parquet_path)
 
@@ -678,114 +512,132 @@ class DataProcessor:
 
 # -------------------------------------------------------------------------------------
 
-    def build_tasks(self) -> Tuple[List[TaskSpec], dict]:
-        plan = getattr(self.loader, "processing_plan", None)
-        if plan is None:
-            raise RuntimeError("Loader has no processing_plan. Call loader.build_processing_plan() after loading.")
+    def build_tasks(self) -> Tuple[List[Tuple], dict]:
 
-        tasks: List[TaskSpec] = []
+        tasks = []
         out = {}
 
-        if plan.pose.enabled:
-            out["pose"] = [None] * len(plan.pose.pairs)
-            for i, (pose_df, ts_df) in enumerate(plan.pose.pairs):
-                tasks.append(TaskSpec("pose", i, self.process_pose_data, (pose_df, ts_df, plan.pose.source, i)))
-        else:
-            out["pose"] = []
+        ts = self.loader.loaded_data.get('timestamp',  [])
+        sleap = self.loader.loaded_data.get('sleap', [])
+        centroids = self.loader.loaded_data.get('centroid', [])
 
-        if plan.bno.enabled:
-            out["bno"] = [None] * len(plan.bno.pairs)
-            for i, (bno_df, hs_df) in enumerate(plan.bno.pairs):
-                tasks.append(TaskSpec("bno", i, self.process_bno_data, (bno_df, hs_df, i)))
+        bno = self.loader.loaded_data.get('bno', [])
+        hs = self.loader.loaded_data.get('headstage', [])   
+
+        self.n_sleaps = len(sleap) // len(ts) if ts and len(sleap) % len(ts) == 0 else 0 # checks for multiple sleap folders, and whether we can assign timestamps to everything
+
+        if self.n_sleaps:
+            out['sleap'] = [None] * len(sleap)
+            tags = [path.split('/')[-2].split('_')[0] for path in self.loader.data_paths['sleap_files']] # ensure its <tag>_sleap_output or sleap_output
+
+            for i in range(len(sleap)):
+                tasks.append(("sleap", i, self.process_sleap_data, (sleap[i], ts[i % len(ts)], tags[i], i)))
+
+
+        self.n_centroids = len(centroids) // len(ts) if ts and len(centroids) % len(ts) == 0 else 0
+
+        if self.n_centroids:
+            out['centroid'] = [None] * len(centroids)
+            tags = [path.split('/')[-1].split('_')[1] for path in self.loader.data_paths['centroid_files']] 
+
+            for i in range(len(centroids)):
+                tasks.append(("centroid", i, self.process_centroid_data, (centroids[i], ts[i % len(ts)], tags[i], i)))
+
+
+        n_bnos = len(bno) // len(hs) if hs and len(bno) % len(hs) == 0 else 0
+
+        if n_bnos:
+            out["bno"] = [None] * len(bno)
+            for i, (bno_df, hs_df) in enumerate(zip(bno, hs)):
+                tasks.append(("bno", i, self.process_bno_data, (bno_df, hs_df, i)))
         else:
             out["bno"] = []
 
-        if plan.neural.enabled:
-            out["neural"] = [None] * len(plan.neural.items)
-            for i, ks in enumerate(plan.neural.items):
-                tasks.append(TaskSpec("neural", i, self.process_neural_data, (ks, i)))
+        kilosort = self.loader.loaded_data.get("kilosort", [])
+
+        if kilosort:
+            valid_kilosort = [ks for ks in kilosort if ks is not None]
+
+            out["neural"] = [None] * len(valid_kilosort)
+            for i, ks in enumerate(valid_kilosort):
+                tasks.append(("neural", i, self.process_neural_data, (ks, i)))
         else:
             out["neural"] = []
 
         return tasks, out
     
     def join_all_data(self, loaded_data):
-        plan = getattr(self.loader, "processing_plan", None)
-        if plan is None:
-            raise RuntimeError("Loader has no processing_plan. Call loader.build_processing_plan() after loading.")
+        print("joining neural data") if self.verbose else None
+        neural_and_labels = loaded_data.get("neural", [])
+        neural_df = pd.concat([row[0] for row in neural_and_labels], axis=1).reindex(self.timeline)
 
-        main_dataframe = pd.DataFrame(index=self.timeline)
+        label_list = [row[1] for row in neural_and_labels]
+        labels_df = pd.concat(label_list, axis=0)
+        label_output_path = os.path.join(self.loader.output_path, f'neural_labels_{self.loader.recording}.parquet')
+        labels_df.to_parquet(label_output_path)
+        print(f'saved neural labels to parquet at \n {label_output_path}') if self.verbose else None
 
-        if plan.neural.enabled:
-            print("joining neural data") if self.verbose else None
-            neural_and_labels = loaded_data.get("neural", [])
-            neural_list = [row[0] for row in neural_and_labels]
-            neural_df = pd.concat(neural_list, axis=1)
-            main_dataframe = main_dataframe.join(neural_df, how="left")
-            main_dataframe = main_dataframe.fillna(0).astype(np.uint16)
+        print("joining sleap data") if self.verbose else None
+        sleap_df = pd.concat(loaded_data.get("sleap", []), axis=0)
+        sleap_df = sleap_df[~sleap_df.index.duplicated(keep='first')].reindex(self.timeline)
 
-            # save labels
-            label_list = [row[1] for row in neural_and_labels]
-            labels_df =pd.concat(label_list,axis=0)
-            label_output_path = os.path.join(self.loader.output_path, f'neural_labels_{self.loader.recording_id}.parquet')
-            labels_df.to_parquet(label_output_path)
-            print(f'saved neural labels to parquet at \n {label_output_path}') if self.verbose else None
-            
-        if plan.pose.enabled:
-            print("joining pose data") if self.verbose else None
-            pose_list = loaded_data.get("pose", [])
-            pose_df = pd.concat(pose_list, axis=0)
-            main_dataframe = main_dataframe.join(pose_df, how="left")
+        print("joining bno data") if self.verbose else None
+        bno_df = pd.concat(loaded_data.get("bno", []), axis=0)
+        bno_df = bno_df[~bno_df.index.duplicated(keep='first')].reindex(self.timeline)
 
-        if plan.bno.enabled:
-            print("joining bno data") if self.verbose else None
-            bno_list = loaded_data.get("bno", [])
-            bno_df = pd.concat(bno_list, axis=0)
-            main_dataframe = main_dataframe.join(bno_df, how="left")
+        print("joining centroid data") if self.verbose else None
+        centroid_df = pd.concat(loaded_data.get("centroid", []), axis=0)
+        centroid_df = centroid_df[~centroid_df.index.duplicated(keep='first')].reindex(self.timeline)
+
+        print('all joined; concatenating everything into main_dataframe and filling nans in neural data with 0s') if self.verbose else None
+
+        main_dataframe = pd.concat([neural_df, sleap_df, centroid_df, bno_df], axis=1)
+        neural_cols = neural_df.columns
+        main_dataframe[neural_cols] = main_dataframe[neural_cols].fillna(0).astype(np.uint16)
 
         return main_dataframe
 
     def add_existence_columns(self, df):
-        plan = getattr(self.loader, "processing_plan", None)
-
         existence_cols = []
+        new_cols = {}
 
-        if plan.neural.enabled:
-            probe_bounds = np.array(self.all_timestamps['npx'][1:3])
+        probe_bounds = np.array(self.all_timestamps['npx'][1:3])
 
-            for i, probe in enumerate(self.loader.npx_probes):
-                col = f"meta_neural_{probe}_exists"
-                existence_cols.append(col)
-                df[col] = 0
-                for r in range(probe_bounds.shape[1]):
-                    start_idx = np.searchsorted(self.timeline, probe_bounds[0, r, i], side='left')
-                    end_idx = np.searchsorted(self.timeline, probe_bounds[1, r, i], side='right')
-                    df.iloc[start_idx:end_idx, df.columns.get_loc(col)] = 1
-                
-        if plan.pose.enabled:
-            pose_bounds = np.array(self.all_timestamps['centroid'][1:3])
-            col = 'meta_pose_exists'
+        for i, probe in enumerate(self.loader.npx_probes):
+            col = f"meta_neural_{probe}_exists"
             existence_cols.append(col)
-            df[col] = 0
-            for r in range(pose_bounds.shape[1]):
-                start_idx = np.searchsorted(self.timeline, pose_bounds[0, r], side='left')
-                end_idx = np.searchsorted(self.timeline, pose_bounds[1, r], side='right')
-                df.iloc[start_idx:end_idx, df.columns.get_loc(col)] = 1
+            arr = np.zeros(len(self.timeline), dtype=np.uint8)
+            for r in range(probe_bounds.shape[1]):
+                start_idx = np.searchsorted(self.timeline, probe_bounds[0, r, i], side='left')
+                end_idx = np.searchsorted(self.timeline, probe_bounds[1, r, i], side='right')
+                arr[start_idx:end_idx] = 1
+            new_cols[col] = arr
 
-        if plan.bno.enabled:
-            bno_bounds = np.array(self.all_timestamps['headstage'][1:3])
-            col = 'meta_bno_exists'
-            df[col] = 0
-            existence_cols.append(col)
-            for r in range(bno_bounds.shape[1]):
-                start_idx = np.searchsorted(self.timeline, bno_bounds[0, r], side='left')
-                end_idx = np.searchsorted(self.timeline, bno_bounds[1, r], side='right')
-                df.iloc[start_idx:end_idx, df.columns.get_loc(col)] = 1
+        centroid_bounds = np.array(self.all_timestamps['centroid'][1:3])
+        col = 'meta_centroid_exists'
+        existence_cols.append(col)
+        arr = np.zeros(len(self.timeline), dtype=np.uint8)
+        for r in range(centroid_bounds.shape[1]):
+            start_idx = np.searchsorted(self.timeline, centroid_bounds[0, r], side='left')
+            end_idx = np.searchsorted(self.timeline, centroid_bounds[1, r], side='right')
+            arr[start_idx:end_idx] = 1
+        new_cols[col] = arr
 
-        df['meta_all_data_exists'] = df[existence_cols].sum(axis=1) == len(existence_cols)
+        bno_bounds = np.array(self.all_timestamps['headstage'][1:3])
+        col = 'meta_bno_exists'
+        existence_cols.append(col)
+        arr = np.zeros(len(self.timeline), dtype=np.uint8)
+        for r in range(bno_bounds.shape[1]):
+            start_idx = np.searchsorted(self.timeline, bno_bounds[0, r], side='left')
+            end_idx = np.searchsorted(self.timeline, bno_bounds[1, r], side='right')
+            arr[start_idx:end_idx] = 1
+        new_cols[col] = arr
+
+        exist_df = pd.DataFrame(new_cols, index=self.timeline)
+        exist_df['meta_all_data_exists'] = (exist_df[existence_cols].sum(axis=1) == len(existence_cols)).astype(np.uint8)
         existence_cols.append('meta_all_data_exists')
 
-        df[existence_cols] = df[existence_cols].astype(np.uint8)
+        df = pd.concat([df, exist_df], axis=1)
 
         if self.loader.config.get('plot', True):
             fig = plt.figure(figsize=(12, 4))
@@ -807,7 +659,7 @@ class DataProcessor:
 
         # make column wise masks
         data_masks = self.data_masks(df)
-        df.attrs['recording_id'] = self.loader.recording_id
+        df.attrs['recording_id'] = self.loader.recording
         df.attrs['data_masks'] = data_masks
         df.attrs['loader_config'] = self.loader.config
         df.attrs['data_paths'] = self.loader.data_paths
@@ -848,40 +700,34 @@ class DataProcessor:
 
     def get_all_timestamps(self):
         """
-        Determine global min/max time bounds using only modalities enabled by the loader plan.
+        Determine global min/max time bounds.
         """
-        plan = getattr(self.loader, "processing_plan", None)
-        if plan is None:
-            raise RuntimeError("Loader has no processing_plan; run loader.build_processing_plan() after loading.")
 
         bounds_start = []
         bounds_end = []
 
         out = {}
 
-        if plan.neural.enabled:
-            npx_times, npx_starts, npx_ends = self.get_npx_time()
-            self.npx_timestamps = npx_times
-            out["npx"] = (npx_times, npx_starts, npx_ends)
+        npx_times, npx_starts, npx_ends = self.get_npx_time()
+        self.npx_timestamps = npx_times
+        out["npx"] = (npx_times, npx_starts, npx_ends)
 
-            bounds_start.append(np.asarray(npx_starts).ravel())
-            bounds_end.append(np.asarray(npx_ends).ravel())
+        bounds_start.append(np.asarray(npx_starts).ravel())
+        bounds_end.append(np.asarray(npx_ends).ravel())
 
-        if plan.pose.enabled:
-            centroid_times, centroid_starts, centroid_ends = self.get_df_time(datatype="centroid")
-            self.centroid_timestamps = centroid_times
-            out["centroid"] = (centroid_times, centroid_starts, centroid_ends)
+        centroid_times, centroid_starts, centroid_ends = self.get_df_time(datatype="timestamp")
+        self.centroid_timestamps = centroid_times
+        out["centroid"] = (centroid_times, centroid_starts, centroid_ends)
 
-            bounds_start.append(np.asarray(centroid_starts).ravel())
-            bounds_end.append(np.asarray(centroid_ends).ravel())
+        bounds_start.append(np.asarray(centroid_starts).ravel())
+        bounds_end.append(np.asarray(centroid_ends).ravel())
 
-        if plan.bno.enabled:
-            hs_times, hs_starts, hs_ends = self.get_df_time(datatype="headstage")
-            self.hs_timestamps = hs_times
-            out["headstage"] = (hs_times, hs_starts, hs_ends)
+        hs_times, hs_starts, hs_ends = self.get_df_time(datatype="headstage")
+        self.hs_timestamps = hs_times
+        out["headstage"] = (hs_times, hs_starts, hs_ends)
 
-            bounds_start.append(np.asarray(hs_starts).ravel())
-            bounds_end.append(np.asarray(hs_ends).ravel())
+        bounds_start.append(np.asarray(hs_starts).ravel())
+        bounds_end.append(np.asarray(hs_ends).ravel())
 
         if len(bounds_start) == 0 or len(bounds_end) == 0:
             raise ValueError(
@@ -912,11 +758,15 @@ class DataProcessor:
             print('adding extra features for sleap-based pose') if self.verbose else None    
         return
 
-    def process_pose_data(self, pose, time, source: str, file_index: int):
+    def process_sleap_data(self, pose, time, source: str, file_index: int):
         print("processing pose data") if self.verbose else None
         datatype = "pose"
+
+        source = source if self.n_sleaps > 1 else None # we want to append whether its large/box if we have multiple sleaps
+        if source == 'sleap':
+            source = None
     
-        df = self.df_w_timestamps(pose, time, datatype)
+        df = self.df_w_timestamps(pose, time, datatype, source)
 
         if self.save_raw:
             raw_path = os.path.join(self.raw_data_path, f'raw_pose_{file_index}.parquet')
@@ -929,7 +779,15 @@ class DataProcessor:
             df = self.skip_initial_seconds(df, skip_seconds)
         
         if self.loader.config.get('clean_pose', True):
-            df = self.clean_dataframe(df, self.loader.data_paths['video_files'][file_index], source, plot=self.loader.config.get('plot', True))
+            video_files = self.loader.data_paths.get("video_files", [])
+            video_path = video_files[file_index % len(video_files)] if video_files else None
+            plot = self.loader.config.get('plot', True) and video_path is not None
+
+            df = self.pose_cleaner.clean_dataframe(
+                df,
+                video_path,
+                plot=plot,
+            )
 
         # interp_df = self.extra_beh_features(interp_df, source)
 
@@ -937,11 +795,38 @@ class DataProcessor:
         df = self.interpolate_df_to_timeline(df, self.timeline)
         df = self.assign_closest_frame(df, original_index, datatype)
     
-        if source == "sleap":
-            df.columns = [f"meta_{col}" if "score" in col else col for col in df.columns]
+        df.columns = [f"meta_{col}" if "score" in col else col for col in df.columns]
 
         df[f'meta_{datatype}_source_file'] = file_index
         print("processed pose data") if self.verbose else None
+        return df
+    
+    def process_centroid_data(self, centroid, time, source: str, file_index: int):
+        print("processing centroid data") if self.verbose else None
+        datatype = "centroid"
+
+        source = source if self.n_centroids > 1 else None # we want to append whether its large/box if we have multiple centroids
+    
+        df = self.df_w_timestamps(centroid, time, datatype, source)
+
+        if self.save_raw:
+            raw_path = os.path.join(self.raw_data_path, f'raw_centroid_{file_index}.parquet')
+            df.to_parquet(raw_path)
+            print(f'saved raw centroid data to {raw_path}') if self.verbose else None
+
+        skip_frames = self.loader.config.get('skip_frames', None)
+        if skip_frames:
+            skip_seconds = skip_frames[file_index]
+            df = self.skip_initial_seconds(df, skip_seconds)
+
+        original_index = df.index
+        df = self.interpolate_df_to_timeline(df, self.timeline)
+        df = self.assign_closest_frame(df, original_index, datatype)
+
+        df[f'meta_{datatype}_source_file'] = file_index
+
+        df.columns = [f"pose_{col}" for col in df.columns]
+        print("processed centroid data") if self.verbose else None
         return df
 
     def process_bno_data(self, bno, time, file_index: int):
@@ -962,7 +847,7 @@ class DataProcessor:
         print('processed bno data') if self.verbose else None
         return interp_df
 
-    def df_w_timestamps(self, df, time, datatype):
+    def df_w_timestamps(self, df, time, datatype, source=None):
         df_tmp = df.copy()
         time_tmp = time.copy()
 
@@ -986,6 +871,9 @@ class DataProcessor:
         df_tmp.index = pd.to_datetime(df_tmp.index)
         df_tmp.columns = [f"{datatype}_{col}" for col in df_tmp.columns]
 
+        if source:
+            df_tmp.columns = [f"{col}_{source}" if col.startswith(f"{datatype}_") else col for col in df_tmp.columns]
+
         return df_tmp
 
     def interpolate_df_to_timeline(self, df, timeline):
@@ -1000,7 +888,6 @@ class DataProcessor:
         combined.loc[valid_range] = combined.loc[valid_range].interpolate(method='time')
         final = combined.loc[combined.index.isin(timeline) & valid_range]
         return final
-
 
     def assign_closest_frame(self, interp_df: pd.DataFrame, original_index: pd.DatetimeIndex, datatype) -> pd.DataFrame:
         """
@@ -1135,326 +1022,125 @@ class DataProcessor:
             end.append(ts[-1])
         return time,start,end
 
-    def compute_diffs(self, p):
-        return np.vstack([[0, 0], np.diff(p, axis=0)])
     
-    def group_close_points(self, close_points, max_gap=50):
-        """
-        Groups consecutive indices if they are within `max_gap` apart.
-        Returns a list of index groups.
-        """
-        if close_points.size == 1:
-            return [[close_points, close_points]]
-        if len(close_points) == 0:
-            return []
+    def tests(self, out,):
+        # check that all the columns are in ascending order just like the cluster indices in the labels
+        columns_are_indices = []
+        for df in out['neural']:
+            for i, col in enumerate(df[0].columns):
+                columns_are_indices.append(col.split('_')[2] == str(i))
+
+        try:
+            assert np.sum(columns_are_indices) == len(columns_are_indices), 'not all columns have the correct cluster index in their name'
+        except AssertionError as e:
+            print(str(e))
+
+        # %%
+        # check that correct labels are assigned to columns based on index - kinda redundant with the previous
+        correct_UR_label = []
+        for df in out['neural']:
+            for i, col in enumerate(df[0].columns):
+                correct_UR_label.append(col.split('_')[3] == df[1].iloc[i]['sua_prediction'])
         
-        groups = [[close_points[0]]]
-        for idx in close_points[1:]:
-            if idx - groups[-1][-1] <= max_gap:
-                groups[-1].append(idx)
-            else:
-                groups.append([idx])
-        return groups
-    
-    def get_same_diff_groups(self, pos, n_same=20, max_gap = 10, tol = 1e-5):
-        diffs = np.diff(pos, axis=0)
+        try:
+            assert np.sum(correct_UR_label) == len(correct_UR_label), 'not all columns have the correct UR label in their name'
+        except AssertionError as e:
+            print(str(e))
 
-        same_diff = np.linalg.norm(np.diff(diffs, axis=0), axis=1) < tol
-        same_diff = np.concatenate(([False], same_diff, [False]))
+        # %%
+        # check if num_spikes in the labels thing corresponds with the number of spikes when we sum the neural DF
+        for i, df in enumerate(out['neural']):
+            try:
+                df_sum = df[0].sum()
+                num_spikes = out['neural'][i][1]['num_spikes'].values
+                assert (df_sum == num_spikes).all(), f'sum of binned df doesnt correspond to num_spikes in labels for neural dataset {i}'
+            except AssertionError as e:
+                print(str(e))
 
-        N = n_same 
-        mask = np.zeros_like(same_diff, dtype=bool)
+        # %%
+        # check if all of the relevant dataframes have indices which are in processor.timeline
+        check_tl = self.timeline.values.astype('int64')
+        for i, df in enumerate(out['neural']):
+            try: 
+                assert np.isin(df[0].index.values.astype('int64'), check_tl).all(), 'not all neural df indices are in the global timeline'
+            except AssertionError as e:
+                print(str(e))
 
-        count = 0
-        for i, val in enumerate(same_diff):
-            if val:
-                count += 1
-            else:
-                if count >= N:
-                    mask[i - count:i] = True
-                count = 0
-        same_diff = mask
+        for i, df in enumerate(out['sleap']):
+            try:
+                assert np.isin(df.index.values.astype('int64'), check_tl).all(), 'not all sleap df indices are in the global timeline'
+            except AssertionError as e:
+                print(str(e))
 
-        same_diff_groups = self.group_close_points(np.argwhere(same_diff).squeeze(), max_gap=max_gap)
-        return same_diff_groups
+        for i, df in enumerate(out['centroid']):
+            try:
+                assert np.isin(df.index.values.astype('int64'), check_tl).all(), 'not all centroid df indices are in the global timeline'
+            except AssertionError as e:
+                print(str(e))
 
-    def read_frame(self, cap, frame_idx):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_idx))
-        ret, frame = cap.read()
-        if not ret:
-            return None
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    def plot_groups_w_video_combiner(self, groups, positions, video_path, plotlen=30, max_plots = 10, random=True):
+        for i, df in enumerate(out['bno']):
+            try:
+                assert np.isin(df.index.values.astype('int64'), check_tl).all(), 'not all bno df indices are in the global timeline'
+            except AssertionError as e:
+                print(str(e))
+
+        # %%
+        # so we notice that the centroids dont always have the same length as the timestamps, which is bonsai closing processing before the last centroid gets written.
+        dl = self.loader
+        for i in range(len(dl.loaded_data['centroid'])):
+            try:
+                assert dl.loaded_data['centroid'][i].shape[0] == dl.loaded_data['timestamp'][i].shape[0], f'{i} isnt same shape'
+            except AssertionError as e:
+                print(str(e))
+
+        # %%
+        # whereas I think the sleap and timestamps should be, I hope. Anyway, in either case we're assuming that everything is aligned at the start, but only the last stuff gets cut off, because bonsai closes prematurely.
         
-        if isinstance(positions, np.ndarray):
-            positions = [positions]
+        for i in range(len(dl.loaded_data['sleap'])):
+            try: 
+                assert dl.loaded_data['sleap'][i].shape[0] == dl.loaded_data['timestamp'][i % len(dl.loaded_data['timestamp'])].shape[0], f'{i} isnt same shape'
+            except AssertionError as e:
+                print(str(e))   
+        return
 
-        cap = cv2.VideoCapture(video_path)
-        if random:
-            np.random.shuffle(groups)
-
-        rows, cols = int(np.ceil(max_plots/3)), 3
-        fig, axes = plt.subplots(rows, cols, figsize=(20*cols, 20*rows))
-        axes = axes.flatten()
-
-        for i, group in enumerate(groups):
-            if i == max_plots:
-                break
-            
-            start = max(0, group[0] - plotlen)
-            end = min(len(positions[0]), group[-1] + plotlen)
-
-            start_frame = self.read_frame(cap, start)
-            end_frame   = self.read_frame(cap, end)
-
-            axes[i].imshow(start_frame)
-            axes[i].imshow(end_frame, alpha=0.5)   
-            for position in positions:
-                axes[i].plot(*position[start:end].T, lw=1)
-            axes[i].axis("off")
-        
-        fig.savefig(os.path.join(self.loader.output_path, 'pose_cleaner_QC.png'))
-        plt.close(fig)
-        cap.release()
-
-    def corner_row_mask_df(self, df, x_suffix=".x", y_suffix=".y"):
-        # collect x/y columns in matching order
-        x_cols = [c for c in df.columns if c.endswith(x_suffix)]
-        y_cols = [c for c in df.columns if c.endswith(y_suffix)]
-
-        # ensure we only keep pairs that exist in both
-        x_base = {c[:-len(x_suffix)] for c in x_cols}
-        y_base = {c[:-len(y_suffix)] for c in y_cols}
-        bases = sorted(x_base & y_base)
-
-        x_cols = [b + x_suffix for b in bases]
-        y_cols = [b + y_suffix for b in bases]
-
-        X = df[x_cols].to_numpy(dtype=float) 
-        Y = df[y_cols].to_numpy(dtype=float)
-
-        left   = 200
-        right  = 2100
-        bottom = 200
-        top    = 1800
-
-        in_corner = (
-            ((X < left)  & (Y < bottom)) |
-            ((X < left)  & (Y > top))    |
-            ((X > right) & (Y < bottom)) |
-            ((X > right) & (Y > top))
-        )  
-
-        return in_corner.any(axis=1)
-
-    def get_all_diffs_df(self, df, keypoints):
-        diffs = df.copy()
-        for kp in keypoints:
-            pos_kp = get_columns(df, kp, 'contains', exclude='score')
-            new_df = (pos_kp.bfill()
-                        .diff()
-                        .mask(pos_kp.shift().isna())
-                        .ffill()
-                    )
-            diffs[f'{kp}.diff'] = np.linalg.norm(new_df.values,axis=1)
-        return diffs
-    
-    def get_jumps_and_unsmooth(self, full_df, keypoints, smooth_window = 3, max_idx_gap = 10, max_idx_gap_smooth = 5, jump_threshold=200, smooth_diff_threshold=25):
-        
-        jump_groups_dict = {}
-        smooth_jump_groups_dict = {}
-
-        for kp_n, kp in enumerate(keypoints):
-            # find jumps, write them to dict and set a column for them
-            jumps = full_df[f'{kp}.diff'] > jump_threshold 
-            jump_groups = self.group_close_points(np.where(jumps.values)[0], max_gap=max_idx_gap)
-            jump_groups_dict[kp] = jump_groups
-            jumps = [idx for group in jump_groups for idx in group]
-            full_df[f'{kp}.jumps'] = 0
-            full_df.iloc[jumps, full_df.columns.get_loc(f'{kp}.jumps')] = 1
-
-            # remove the jumps and interpolate them
-            full_df[[f'{kp}_clean.x', f'{kp}_clean.y']] = full_df[[f'{kp}.x', f'{kp}.y']].copy().mask(full_df[f'{kp}.jumps'] == 1) 
-            full_df[[f'{kp}_clean.x', f'{kp}_clean.y']] = full_df[[f'{kp}_clean.x', f'{kp}_clean.y']].interpolate(method='time', limit_direction='both')
-
-            # now compare smoothness and normal, find where they differ significantly, write to dict and set column
-            full_df[[f'{kp}_clean_smooth.x', f'{kp}_clean_smooth.y']] = full_df[[f'{kp}_clean.x', f'{kp}_clean.y']].copy().rolling(window=smooth_window, win_type='gaussian', center=True).mean(std=3)
-            diff_between_normal_and_smooth = np.linalg.norm(full_df[[f'{kp}_clean.x', f'{kp}_clean.y']].values - full_df[[f'{kp}_clean_smooth.x', f'{kp}_clean_smooth.y']].values, axis=1)
-            full_df[f'{kp}_clean_smooth.diff'] = diff_between_normal_and_smooth
-            smooth_jumps = full_df[f'{kp}_clean_smooth.diff'] > smooth_diff_threshold
-            smooth_jump_groups = self.group_close_points(np.where(smooth_jumps.values)[0], max_gap=max_idx_gap_smooth)
-            smooth_jump_groups_dict[kp] = smooth_jump_groups
-            smooth_jumps = [idx for group in smooth_jump_groups for idx in group]
-            full_df[f'{kp}_clean_smooth_jump'] = 0
-            full_df.iloc[smooth_jumps, full_df.columns.get_loc(f'{kp}_clean_smooth_jump')] = 1
-
-            # remove the smooth jumps and interpolate them
-            full_df[[f'{kp}_clean2.x', f'{kp}_clean2.y']] = full_df[[f'{kp}_clean.x', f'{kp}_clean.y']].copy().mask(full_df[f'{kp}_clean_smooth_jump'] == 1)
-            full_df[[f'{kp}_clean2.x', f'{kp}_clean2.y']] = full_df[[f'{kp}_clean2.x', f'{kp}_clean2.y']].interpolate(method='time', limit_direction='both')
-
-            # remove all the intermediate stuff, rename the clean columns to the original names + clean
-            full_df.drop(columns=[f'{kp}.diff', f'{kp}.jumps', f'{kp}_clean.x', f'{kp}_clean.y', f'{kp}_clean_smooth.x', f'{kp}_clean_smooth.y', f'{kp}_clean_smooth.diff', f'{kp}_clean_smooth_jump'], inplace=True)
-            full_df.columns = [c.replace(f'{kp}_clean2', f'{kp}_clean') for c in full_df.columns]
-            
-        return full_df, jump_groups_dict, smooth_jump_groups_dict
-
-    def plot_orig_clean_and_jumps(self, init_kp, clean_kp, jump_groups_dict, smooth_jump_groups_dict, plot_kp):
-        fig, ax = plt.subplots(1,3, figsize=(30,10))
-        ax[0].plot(*init_kp.T,lw=.3)
-        ax[0].set_title("Original")
-        ax[1].plot(*clean_kp.T,lw=.3)
-        ax[1].set_title("Cleaned")
-        # plot the nans_in_plot_kp as separate segments instead of all connected
-        for group in smooth_jump_groups_dict[plot_kp]:
-            ax[2].plot(*init_kp[group].T, lw = .3)
-        for group in jump_groups_dict[plot_kp]:
-            ax[2].plot(*init_kp[group].T, lw = .3)
-        ax[2].set_title("stuf taken out")
-        fig.savefig(os.path.join(self.loader.output_path, 'pose_cleaner_QC_jumps.png'))
-        plt.close(fig)
-
-    def clean_dataframe(self, df, video_path, source, plot):
-        # check if sleap exists or not, otherwise just 
-        
-        if source == 'sleap':
-            base_keypoint = 'pose_tailstart1'
-            sleap_pose = get_columns(df, '','contains', exclude=['score','centroid']).copy() 
-            # we exclude cleaning the centroid if we have sleap because the "corners" are different; margin should be 200 for the sleap since its based on the video directly, whereas for the centroid it should be 10 or so. Should find a way to still clean centroid
-            if sleap_pose.empty:
-                print('no sleap pose columns found, skipping cleaning') if self.verbose else None
-                return df, None
-            
-        elif source == 'centroid_xy':
-            base_keypoint = 'pose_bonsai_centroid'
-            margin = 10
-            sleap_pose = df.copy()
-
-        else: 
-            raise ValueError(f'unknown source {source} for cleaning')
-        
-        xy_cols = sleap_pose.columns
-        keypoints = np.unique([c[:-2] for c in xy_cols])
-        
-        nans0 = self.corner_row_mask_df(sleap_pose)
-
-        df_clean = df.copy()
-        df_clean.loc[nans0, xy_cols] = np.nan 
-        
-        full_df = self.get_all_diffs_df(df_clean, keypoints)
-        full_df, jump_groups_dict, smooth_jump_groups_dict = self.get_jumps_and_unsmooth(full_df, keypoints, jump_threshold=200, smooth_diff_threshold=30)
-
-        init_kp = get_columns(sleap_pose, base_keypoint, 'contains', exclude='score').values
-        clean_kp = get_columns(full_df, base_keypoint+'_clean', 'contains', exclude='score').values
-
-        big_jumps = jump_groups_dict[base_keypoint]
-        smooth_jumps = smooth_jump_groups_dict[base_keypoint]
-        
-        if plot and sum(len(g) for g in big_jumps + smooth_jumps) > 15:
-            self.plot_groups_w_video_combiner(big_jumps + smooth_jumps, [init_kp, clean_kp], video_path, plotlen=15, max_plots=9, random=True) 
-            self.plot_orig_clean_and_jumps(init_kp, clean_kp, jump_groups_dict, smooth_jump_groups_dict, base_keypoint)
-        else:
-            print('data was clean, no bad stuff to plot :) ') if self.verbose else None
-        return full_df
-
-
-    
 def main():
     parser = argparse.ArgumentParser(description="Process Neuropixels recording.")
     parser.add_argument("path", help="Path to recording directory")
-
-    parser.add_argument(
-        "--save-raw",
-        type=str2bool,
-        default=True,
-        help="Whether to save raw pose/bno/spike parquet files (default: True). "
-             "Use --save-raw false to disable.",
-    )
-
-    parser.add_argument(
-        '--verbose',
-        type=str2bool,
-        default=True,
-        help="Whether to print verbose logs during processing (default: True). "
-             "Use --verbose false to disable.",
-    )
-
-    parser.add_argument(
-        '--freq',
-        type=str,
-        default='10ms',
-        help="Frequency string for main timeline (default: '10ms'). "
-             "E.g., '100ms', '1s', '500ms', etc.",
-    )
-
-    parser.add_argument(
-        '--plot',
-        type=str2bool,
-        default=True,
-        help="Whether to generate plots during processing (default: True). "
-             "Use --plot false to disable.",
-    )
-
-    parser.add_argument(
-        '--clean_pose',
-        type=str2bool,
-        default=True,
-        help="Whether to clean pose data during processing (default: True). Only works for sleap pose."
-             "Use --clean_pose false to disable.",
-    )
-
-    parser.add_argument(
-        '--workers',
-        type=int,
-        default=16,
-        help="Number of parallel workers to use for loading and processing (default: 16).",
-    )
-
-    parser.add_argument(
-        '--skip_frames',
-        type=str,
-        default=None,
-        help='list of how many seconds to skip at the start of each recording segment, in the format "[10, 5, 0]" (default: None).',
-    )
-
+    parser.add_argument("--output_path", type=str, default=None)
+    parser.add_argument("--save-raw", action='store_true', default=True)
+    parser.add_argument('--verbose', action='store_true', default=True)
+    parser.add_argument('--freq', type=str, default='10ms')
+    parser.add_argument('--plot', action='store_true', default=True)
+    parser.add_argument('--clean_pose', action='store_true', default=True)
+    parser.add_argument('--workers', type=int, default=16)
+    parser.add_argument('--skip_frames', type=str, default=None)
     args = parser.parse_args()
-    path = normalize_path(args.path)
-        
-    config_id = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    output_path = os.path.join(path, "processed_data") + '-' + config_id
-    args.output_path = output_path
-    os.makedirs(output_path, exist_ok=True)
+    config = vars(args)
 
-    recording = os.path.basename(os.path.normpath(path))
-    print(f"Processing recording {recording} at path: {path}")
-    log_file = os.path.join(args.output_path, f"process_{recording}.log")
-    logger = setup_logger(log_file, args.verbose)
+    if config['output_path'] is None:
+        config['output_path'] = os.path.join(config['path'], "processed_data-" + datetime.now().strftime("%Y_%m_%d_%H_%M_%S"))
+        # config['output_path'] = os.path.join(config['path'], "processed_data")
+    os.makedirs(config['output_path'], exist_ok=True)
+
+    if config['skip_frames'] is not None:
+        import json
+        config['skip_frames'] = json.loads(config['skip_frames'])
+
+    config['recording'] = os.path.basename(os.path.normpath(config['path']))
+    log_file = os.path.join(config['output_path'], "combiner.log")
+
+    logger = setup_logger(log_file, config['verbose'])
     sys.stdout = StreamToLogger(logger, logging.INFO)
     sys.stderr = StreamToLogger(logger, logging.ERROR)
 
-    logger.info("Starting processing")
-    logger.info(f"OS: {platform.platform()}")
-    logger.info(f"Input path: {args.path}")
-    logger.info(f"Normalized path: {path}")
-    logger.info(f"Output path: {args.output_path}")
-    logger.info(f"Save raw: {args.save_raw}")
-    logger.info(f"Verbose: {args.verbose}")
-    logger.info(f"Frequency: {args.freq}")
-    logger.info(f"Plot: {args.plot}")
+    logger.info(f"Processing recording {config['recording']} at path: {config['path']}")
 
-    config = vars(args)
     loader = DataLoader(config)
-    loaded_data, load_errors = loader.load_all_data(max_workers=args.workers)
+    loaded_data, load_errors = loader.load_all_data(max_workers=config['workers'])
     processor = DataProcessor(loader)
-    final_dataframe, process_errors = processor.process_all_data(max_workers=args.workers)
-    logger.info("Processing complete")
-    logger.info(f"Total load errors: {len(load_errors)}")
-    logger.info(f"Total process errors: {len(process_errors)}")
+    final_dataframe, process_errors = processor.process_all_data(max_workers=config['workers'])
 
-    logger.info("All tasks completed")
-
-    # Ensure output directory and all contents are read/write on any platform
-    # make_writable(args.output_path)
+    logger.info(f"Done. Load errors: {len(load_errors)}, Process errors: {len(process_errors)}")
 
 if __name__ == "__main__":
     try:
