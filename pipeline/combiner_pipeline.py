@@ -1089,7 +1089,7 @@ class DataProcessor:
         dl = self.loader
         for i in range(len(dl.loaded_data['centroid'])):
             try:
-                assert dl.loaded_data['centroid'][i].shape[0] == dl.loaded_data['timestamp'][i].shape[0], f'{i} isnt same shape'
+                assert dl.loaded_data['centroid'][i].shape[0] == dl.loaded_data['timestamp'][i].shape[0], f'centroid {i} isnt same shape'
             except AssertionError as e:
                 print(str(e))
 
@@ -1098,7 +1098,7 @@ class DataProcessor:
         
         for i in range(len(dl.loaded_data['sleap'])):
             try: 
-                assert dl.loaded_data['sleap'][i].shape[0] == dl.loaded_data['timestamp'][i % len(dl.loaded_data['timestamp'])].shape[0], f'{i} isnt same shape'
+                assert dl.loaded_data['sleap'][i].shape[0] == dl.loaded_data['timestamp'][i % len(dl.loaded_data['timestamp'])].shape[0], f'sleap {i} isnt same shape'
             except AssertionError as e:
                 print(str(e))   
         return
