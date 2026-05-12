@@ -3,18 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $0 <day_directory> <large|box|minimaze>
-Example: $0 /data/2025_12_02_square_arena_02 large
+Usage: $0 <day_directory> <large|box|minimaze> [<large|box|minimaze> ...]
+Example: $0 /data/2025_12_02_square_arena_02 large box
 EOF
 }
 
-if [ $# -ne 2 ]; then
+if [ $# -lt 2 ]; then
   usage >&2
   exit 1
 fi
 
 DAY_DIR="$1"
-MAZE="$2"
+shift
+MAZES=("$@")
 
 if [ ! -d "$DAY_DIR" ]; then
   echo "ERROR: Day directory does not exist: $DAY_DIR" >&2
@@ -25,13 +26,15 @@ if [ ! -d "$DAY_DIR/data" ]; then
   exit 2
 fi
 
-case "$MAZE" in
-  large|box|minimaze) ;;
-  *)
-    echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
-    exit 2
-    ;;
-esac
+for MAZE in "${MAZES[@]}"; do
+  case "$MAZE" in
+    large|box|minimaze) ;;
+    *)
+      echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
+      exit 2
+      ;;
+  esac
+done
 
 if ! command -v bsub >/dev/null 2>&1; then
   echo "ERROR: 'bsub' command not found in PATH." >&2
@@ -66,30 +69,35 @@ extract_job_id() {
 }
 
 DIR_NAME="$(basename "$DAY_DIR")"
-LOG_DIR="$DAY_DIR/sleap_output"
-mkdir -p "$LOG_DIR"
 
 SLEAP_QUEUE="${SLEAP_QUEUE:-gpu_a100}"
 SLEAP_CORES="${SLEAP_CORES:-12}"
 SLEAP_WALLTIME="${SLEAP_WALLTIME:-36:00}"
 SLEAP_GPU="${SLEAP_GPU:-1}"
 
-JOB_NAME="sleap_${DIR_NAME}"
-echo "Submitting SLEAP job: $JOB_NAME"
-submit_output="$(bsub -J "$JOB_NAME" \
-    -q "$SLEAP_QUEUE" \
-    -gpu "num=${SLEAP_GPU}" \
-    -n "$SLEAP_CORES" \
-    -W "$SLEAP_WALLTIME" \
-    -oo "$LOG_DIR/${JOB_NAME}.%J.out" \
-    -eo "$LOG_DIR/${JOB_NAME}.%J.err" \
-    bash -c "SLEAP_SIF='$SLEAP_SIF' bash '$RUNNER_SCRIPT' '$DAY_DIR' '$MAZE'")"
+sleap_job_ids=()
+for MAZE in "${MAZES[@]}"; do
+  LOG_DIR="$DAY_DIR/${MAZE}_sleap_output"
+  mkdir -p "$LOG_DIR"
 
-printf '%s\n' "$submit_output"
+  JOB_NAME="sleap_${DIR_NAME}_${MAZE}"
+  echo "Submitting SLEAP job: $JOB_NAME"
+  submit_output="$(bsub -J "$JOB_NAME" \
+      -q "$SLEAP_QUEUE" \
+      -gpu "num=${SLEAP_GPU}" \
+      -n "$SLEAP_CORES" \
+      -W "$SLEAP_WALLTIME" \
+      -oo "$LOG_DIR/${JOB_NAME}.%J.out" \
+      -eo "$LOG_DIR/${JOB_NAME}.%J.err" \
+      bash -c "SLEAP_SIF='$SLEAP_SIF' bash '$RUNNER_SCRIPT' '$DAY_DIR' '$MAZE'")"
 
-sleap_job_id="$(extract_job_id "$submit_output")" || {
-  echo "ERROR: Failed to parse LSF job ID from SLEAP submission output." >&2
-  exit 3
-}
+  printf '%s\n' "$submit_output"
 
-echo "SLEAP_JOB_ID=$sleap_job_id"
+  job_id="$(extract_job_id "$submit_output")" || {
+    echo "ERROR: Failed to parse LSF job ID from SLEAP submission output." >&2
+    exit 3
+  }
+  sleap_job_ids+=("$job_id")
+done
+
+echo "SLEAP_JOB_IDS=${sleap_job_ids[*]}"

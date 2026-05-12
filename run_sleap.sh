@@ -44,7 +44,7 @@ case "$MAZE" in
     ;;
 esac
 
-OUTPUT_DIR="$DAY_DIR/sleap_output"
+OUTPUT_DIR="$DAY_DIR/${MAZE}_sleap_output"
 INPUT_DIR="$DAY_DIR/data"
 
 # SLEAP_SIF is passed in from submit_sleap.sh via the environment
