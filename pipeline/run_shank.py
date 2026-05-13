@@ -26,7 +26,7 @@ import spikeinterface.preprocessing as spre
 from kilosort import io, run_kilosort
 from spikeinterface.extractors.neuropixels_utils import get_neuropixels_sample_shifts
 
-from utils.get_artifacts import SaturationArtifactRemover, merge_artifact_logs
+from utils.get_artifacts import SaturationArtifactRemover, find_stuck_channels, merge_artifact_logs
 from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
@@ -144,7 +144,15 @@ def split_recording(
           f"channel_ids={rec.get_channel_ids()}, "
           f"probe device_channel_indices={rec.get_probe().device_channel_indices}")
 
-    # 3. Lazy saturation artifact removal — single pass detect+remove on raw shank data;
+    # 3. Pre-screen for chronically saturated channels so they don't poison
+    #    the per-timestep saturation detector. They're left in the data and
+    #    handled by bad-channel detection + interpolation later.
+    stuck_channels = find_stuck_channels(rec, abs_threshold=3500, direction="upper")
+    if stuck_channels:
+        print(f"Excluding {len(stuck_channels)} chronically saturated channel(s) "
+              f"from artifact detection: {stuck_channels}")
+
+    # 4. Lazy saturation artifact removal — single pass detect+remove on raw shank data;
     #    each chunk worker logs its detected periods to art_log_dir, merged after intermediate save.
     art_log_dir = Path(shank_folder) / "artifact_log"
     rec = SaturationArtifactRemover(
@@ -156,6 +164,7 @@ def split_recording(
         mode="linear",
         margin_ms=500,
         log_dir=art_log_dir,
+        excluded_channels=stuck_channels,
     )
 
     # 4. Highpass filter on shank only
@@ -299,7 +308,19 @@ if __name__ == "__main__":
     print(shank_recording.get_total_duration())
     print("Running Kilosort...")
 
-    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000, 'nblocks': 0}
+    # Skip past any leading saturation artifact so Kilosort's universal-template
+    # init doesn't read a zeroed window. Reads artifact_periods.json (segment 0)
+    # and shifts tmin past any period starting at t=0.
+    tmin = 0.0
+    artifact_path = shank_folder / "artifact_periods.json"
+    if artifact_path.exists():
+        with open(artifact_path) as f:
+            seg0 = json.load(f).get("segments", [[]])[0]
+        if seg0 and seg0[0]["start_sec"] == 0.0:
+            tmin = seg0[0]["end_sec"] + 1.0  # 1 s buffer past the artifact
+            print(f"Leading artifact detected ending at {seg0[0]['end_sec']:.2f}s — setting Kilosort tmin={tmin:.2f}s")
+
+    settings = {'fs': fs, 'n_chan_bin': c, 'batch_size': 30000, 'nblocks': 0, 'tmin': tmin}
 
     ops, st, clu, tF, Wall, similar_templates, is_ref, \
         est_contam_rate, kept_spikes = run_kilosort(

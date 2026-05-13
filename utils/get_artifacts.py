@@ -305,10 +305,53 @@ def remove_saturation_artifacts(
     )
 
 
+def find_stuck_channels(
+    recording,
+    abs_threshold: float,
+    direction: str = "upper",
+    n_windows: int = 10,
+    win_duration_s: float = 1.0,
+    min_sat_frac: float = 0.5,
+) -> List[str]:
+    """Identify channels that are saturated in every sampled window.
+
+    Sweeps n_windows evenly-spaced windows across the recording and flags
+    channels whose saturation fraction is >= min_sat_frac in every window.
+    Used to skip chronically railed channels in saturation detection so one
+    bad channel doesn't poison the whole shank.
+    """
+    fs = recording.get_sampling_frequency()
+    n_total = recording.get_num_frames()
+    win_samples = int(win_duration_s * fs)
+    if win_samples >= n_total:
+        positions = np.array([0], dtype=np.int64)
+    else:
+        positions = np.linspace(0, n_total - win_samples, n_windows, dtype=np.int64)
+
+    n_chan = recording.get_num_channels()
+    sat_per_window = np.zeros((len(positions), n_chan), dtype=float)
+    for i, pos in enumerate(positions):
+        traces = recording.get_traces(
+            start_frame=int(pos), end_frame=int(pos + win_samples)
+        )
+        if direction == "upper":
+            sat = traces >= abs_threshold
+        elif direction == "lower":
+            sat = traces <= -abs_threshold
+        else:
+            sat = (traces >= abs_threshold) | (traces <= -abs_threshold)
+        sat_per_window[i] = sat.mean(axis=0)
+
+    stuck_mask = np.all(sat_per_window >= min_sat_frac, axis=0)
+    channel_ids = np.asarray(recording.get_channel_ids())
+    return channel_ids[stuck_mask].tolist()
+
+
 class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
     def __init__(self, parent_recording_segment,
                  abs_threshold, direction, ms_before_s, ms_after_s,
-                 mode, margin_samples, log_dir=None, seg_idx=0):
+                 mode, margin_samples, log_dir=None, seg_idx=0,
+                 excluded_idx=None):
         super().__init__(parent_recording_segment)
         self.abs_threshold = abs_threshold
         self.direction = direction
@@ -318,6 +361,7 @@ class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
         self.margin_samples = margin_samples
         self.log_dir = log_dir
         self.seg_idx = seg_idx
+        self.excluded_idx = list(excluded_idx) if excluded_idx else []
 
     def get_traces(self, start_frame, end_frame, channel_indices):
         n_total = self.get_num_samples()
@@ -329,13 +373,22 @@ class _SaturationArtifactRemoverSegment(BasePreprocessorSegment):
             fetch_start, fetch_end, slice(None)
         )
 
+        # Mask out chronically saturated channels for detection only — leave
+        # the underlying traces unchanged so downstream bad-channel detection
+        # can flag and interpolate them.
+        if self.excluded_idx:
+            detect_traces = traces.copy()
+            detect_traces[:, self.excluded_idx] = 0
+        else:
+            detect_traces = traces
+
         t = self.abs_threshold
         if self.direction == "upper":
-            sat = np.any(traces >= t, axis=1)
+            sat = np.any(detect_traces >= t, axis=1)
         elif self.direction == "lower":
-            sat = np.any(traces <= -t, axis=1)
+            sat = np.any(detect_traces <= -t, axis=1)
         else:
-            sat = np.any((traces >= t) | (traces <= -t), axis=1)
+            sat = np.any((detect_traces >= t) | (detect_traces <= -t), axis=1)
 
         if sat.any():
             if self.log_dir is not None:
@@ -423,13 +476,19 @@ class SaturationArtifactRemover(BasePreprocessor):
 
     def __init__(self, recording, abs_threshold=1500, direction="upper",
                  ms_before=10.0, ms_after=10.0, mode="linear",
-                 margin_ms=500.0, log_dir=None):
+                 margin_ms=500.0, log_dir=None, excluded_channels=None):
         super().__init__(recording)
 
         fs = recording.get_sampling_frequency()
         ms_before_s = int(ms_before * fs / 1000)
         ms_after_s = int(ms_after * fs / 1000)
         margin_samples = int(margin_ms * fs / 1000)
+
+        excluded_channels = list(excluded_channels) if excluded_channels else []
+        if excluded_channels:
+            excluded_idx = list(recording.ids_to_indices(excluded_channels))
+        else:
+            excluded_idx = []
 
         self._kwargs = dict(
             recording=recording,
@@ -440,6 +499,7 @@ class SaturationArtifactRemover(BasePreprocessor):
             mode=mode,
             margin_ms=margin_ms,
             log_dir=str(log_dir) if log_dir is not None else None,
+            excluded_channels=excluded_channels,
         )
 
         for seg_idx in range(recording.get_num_segments()):
@@ -453,6 +513,7 @@ class SaturationArtifactRemover(BasePreprocessor):
                 margin_samples=margin_samples,
                 log_dir=str(log_dir) if log_dir is not None else None,
                 seg_idx=seg_idx,
+                excluded_idx=excluded_idx,
             )
             self.add_recording_segment(seg)
 

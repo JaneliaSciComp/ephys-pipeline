@@ -3,17 +3,20 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $0 <day_directory> <large|box|minimaze>
-Example: $0 /data/2025_12_02_square_arena_02 large
+Usage: $0 <day_directory> <large|box|minimaze> [<large|box|minimaze> ...]
+Example: $0 /data/2025_12_02_square_arena_02 large box
 EOF
 }
 
-if [ $# -ne 2 ]; then
+if [ $# -lt 2 ]; then
   usage >&2
   exit 1
 fi
 
 DAY_DIR="$1"
+shift
+MAZES=("$@")
+
 if [ ! -d "$DAY_DIR" ]; then
   echo "ERROR: Directory does not exist: $DAY_DIR" >&2
   exit 2
@@ -23,14 +26,15 @@ if [ ! -d "$DAY_DIR/data" ]; then
   exit 2
 fi
 
-MAZE="$2"
-case "$MAZE" in
-  large|box|minimaze) ;;
-  *)
-    echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
-    exit 2
-    ;;
-esac
+for MAZE in "${MAZES[@]}"; do
+  case "$MAZE" in
+    large|box|minimaze) ;;
+    *)
+      echo "ERROR: Invalid maze '$MAZE'. Use one of: large, box, minimaze." >&2
+      exit 2
+      ;;
+  esac
+done
 
 DIR_NAME="$(basename "$DAY_DIR")"
 BASE_DIR="/groups/voigts/voigtslab/submit_a_day"
@@ -104,19 +108,25 @@ done
 # -----------------------------
 # SUBMIT SLEAP
 # -----------------------------
-mkdir -p "$DAY_DIR/sleap_output"
-echo "Submitting SLEAP job via submit_sleap.sh"
-sleap_submit_output="$(SLEAP_SIF="$SLEAP_SIF" bash "$SCRIPT_DIR/submit_sleap.sh" "$DAY_DIR" "$MAZE")"
+echo "Submitting SLEAP jobs via submit_sleap.sh"
+sleap_submit_output="$(SLEAP_SIF="$SLEAP_SIF" bash "$SCRIPT_DIR/submit_sleap.sh" "$DAY_DIR" "${MAZES[@]}")"
 printf '%s\n' "$sleap_submit_output"
 
-sleap_job_id="$(printf '%s\n' "$sleap_submit_output" | awk -F= '/^SLEAP_JOB_ID=/{print $2}' | tail -n 1)"
-if ! [[ "${sleap_job_id:-}" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: Failed to parse SLEAP_JOB_ID from submit_sleap.sh output." >&2
+sleap_job_ids_line="$(printf '%s\n' "$sleap_submit_output" | awk -F= '/^SLEAP_JOB_IDS=/{print $2}' | tail -n 1)"
+if [ -z "$sleap_job_ids_line" ]; then
+  echo "ERROR: Failed to parse SLEAP_JOB_IDS from submit_sleap.sh output." >&2
   exit 3
 fi
+read -r -a sleap_job_ids <<< "$sleap_job_ids_line"
+for job_id in "${sleap_job_ids[@]}"; do
+  if ! [[ "$job_id" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Non-numeric SLEAP job ID parsed: '$job_id'" >&2
+    exit 3
+  fi
+done
 
 dependency_expr=""
-for job_id in "${ks_job_ids[@]}" "$sleap_job_id"; do
+for job_id in "${ks_job_ids[@]}" "${sleap_job_ids[@]}"; do
   term="done($job_id)"
   if [ -z "$dependency_expr" ]; then
     dependency_expr="$term"
@@ -145,5 +155,5 @@ fi
 
 echo "Summary:"
 echo "  Kilosort job IDs: ${ks_job_ids[*]}"
-echo "  SLEAP job ID: $sleap_job_id"
+echo "  SLEAP job IDs: ${sleap_job_ids[*]}"
 echo "  Combiner job ID: $combiner_job_id"
