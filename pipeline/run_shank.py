@@ -353,4 +353,4 @@ if __name__ == "__main__":
     info_path.write_text(json.dumps(pipeline_info, indent=2))
     print(f"Saved pipeline_info.json (git: {pipeline_info['git_hash'][:8]})")
 
-    subprocess.run(["chmod", "-R", "777", str(output_folder)], check=True)
+    subprocess.run(["chmod", "-R", "777", str(output_folder / probe / f"shank_{shank_num}")], check=True)
