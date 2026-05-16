@@ -31,7 +31,8 @@ from utils.probe_utils import load_probe
 
 SAMPLE_RATE = 30000
 N_CHANNELS_PROBE = 384
-
+GAIN_TO_UV = 3.05176 #from bonsai-onix1 np2e docs
+OFFSET_TO_UV = -2048 * GAIN_TO_UV
 
 def get_git_hash() -> str:
     try:
@@ -105,6 +106,8 @@ def split_recording(
             dtype='int16',
             sampling_frequency=SAMPLE_RATE,
             num_channels=N_CHANNELS_PROBE,
+            gain_to_uV=GAIN_TO_UV,
+            offset_to_uV=OFFSET_TO_UV
         )
         print(recording.get_total_duration())
 
@@ -206,8 +209,9 @@ def split_recording(
 
     print(f"Detecting and interpolating over bad channels in shank {shank_num}...")
 
-    destriped_rec.set_channel_gains(1)
-    destriped_rec.set_channel_offsets(0)
+    # set these with constants gain to uv and offset to uv when .bin initially extracted
+    #destriped_rec.set_channel_gains(1)
+    #destriped_rec.set_channel_offsets(0)
 
     _, all_channels_dead = si.detect_bad_channels(destriped_rec, method='coherence+psd', seed=42)
     dead_mask = (all_channels_dead == 'dead')
