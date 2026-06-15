@@ -783,11 +783,11 @@ class DataProcessor:
             video_path = video_files[file_index % len(video_files)] if video_files else None
             plot = self.loader.config.get('plot', True) and video_path is not None
 
-            df = self.pose_cleaner.clean_dataframe(
-                df,
-                video_path,
-                plot=plot,
-            )
+            # df = self.pose_cleaner.clean_dataframe(
+            #     df,
+            #     video_path,
+            #     plot=plot,
+            # )
 
         # interp_df = self.extra_beh_features(interp_df, source)
 

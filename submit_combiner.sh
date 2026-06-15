@@ -116,7 +116,7 @@ COMBINER_QUEUE="${COMBINER_QUEUE:-}"
 COMBINER_WALLTIME="${COMBINER_WALLTIME:-04:00}"
 COMBINER_MEM_MB="${COMBINER_MEM_MB:-16000}"
 
-run_cmd="apptainer exec --bind /groups \"$COMBINER_SIF\" python \"$COMBINER_SCRIPT\" \"$DAY_DIR\" --workers \"$WORKERS\" --plot true"
+run_cmd="apptainer exec --bind /groups \"$COMBINER_SIF\" python \"$COMBINER_SCRIPT\" \"$DAY_DIR\""
 
 bsub_args=(
   -J "$JOB_NAME"
