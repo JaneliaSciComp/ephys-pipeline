@@ -234,10 +234,13 @@ class  DataLoader:
             'bno_files': glob.glob(os.path.join(data_dir, '*bno055*')), 
             'hs_files': glob.glob(os.path.join(data_dir, '*hs*')),
             
-            'video_files': glob.glob(os.path.join(data_dir, '*compressed*')),
-            'centroid_files': glob.glob(os.path.join(data_dir, '*centroid*')), 
-            'timestamp_files': glob.glob(os.path.join(data_dir, '*timestamps*')),
-            'sleap_files': glob.glob(os.path.join(self.path, '*sleap*', '*analysis*')), # since we might have multiple sleap dirs
+            # sorted() so model/video ordering is deterministic across filesystems:
+            # filenames embed ISO timestamps, so lexicographic == chronological,
+            # and sleap/centroid are folder-major then video-sorted.
+            'video_files': sorted(glob.glob(os.path.join(data_dir, '*compressed*'))),
+            'centroid_files': sorted(glob.glob(os.path.join(data_dir, '*centroid*'))),
+            'timestamp_files': sorted(glob.glob(os.path.join(data_dir, '*timestamps*'))),
+            'sleap_files': sorted(glob.glob(os.path.join(self.path, '*sleap*', '*analysis*'))), # since we might have multiple sleap dirs
             }
         
         self.data_paths = all_data_paths
@@ -508,7 +511,7 @@ class DataProcessor:
         print(f'saving final dataframe to parquet at \n {final_parquet_path}') if self.verbose else None
         final_dataframe.to_parquet(final_parquet_path)
 
-        return final_dataframe, errors
+        return out, final_dataframe, errors
 
 # -------------------------------------------------------------------------------------
 
@@ -566,6 +569,39 @@ class DataProcessor:
 
         return tasks, out
     
+    def join_multimodel(self, df_list, n_models):
+        """Combine per-video, per-model dataframes.
+
+        ``df_list`` is ordered model-major (mirrors ``build_tasks``):
+        for file index ``i`` -> model ``i // n_videos``, video ``i % n_videos``.
+
+        Models for the *same* video share an identical time index but have
+        distinct (model-suffixed) column names, so they are joined on the
+        index (axis=1). Consecutive videos have non-overlapping time spans, so
+        they are stacked (axis=0). This replaces the old vertical-concat +
+        ``index.duplicated`` approach, which dropped every model after the
+        first because same-video models collided on identical indices.
+        """
+        df_list = [d for d in df_list if d is not None]
+        if not df_list:
+            return pd.DataFrame(index=self.timeline)
+
+        n_models = max(n_models, 1)
+        n_videos = max(len(df_list) // n_models, 1)
+
+        video_frames = []
+        for v in range(n_videos):
+            model_frames = [df_list[v + m * n_videos] for m in range(n_models)]
+            merged = pd.concat(model_frames, axis=1)
+            # safety net: meta columns are model-suffixed upstream, but guard
+            # against any unexpected dup (parquet rejects duplicate columns)
+            merged = merged.loc[:, ~merged.columns.duplicated(keep='first')]
+            video_frames.append(merged)
+
+        combined = pd.concat(video_frames, axis=0)
+        combined = combined[~combined.index.duplicated(keep='first')]
+        return combined.reindex(self.timeline)
+
     def join_all_data(self, loaded_data):
         print("joining neural data") if self.verbose else None
         neural_and_labels = loaded_data.get("neural", [])
@@ -578,16 +614,14 @@ class DataProcessor:
         print(f'saved neural labels to parquet at \n {label_output_path}') if self.verbose else None
 
         print("joining sleap data") if self.verbose else None
-        sleap_df = pd.concat(loaded_data.get("sleap", []), axis=0)
-        sleap_df = sleap_df[~sleap_df.index.duplicated(keep='first')].reindex(self.timeline)
+        sleap_df = self.join_multimodel(loaded_data.get("sleap", []), self.n_sleaps)
 
         print("joining bno data") if self.verbose else None
         bno_df = pd.concat(loaded_data.get("bno", []), axis=0)
         bno_df = bno_df[~bno_df.index.duplicated(keep='first')].reindex(self.timeline)
 
         print("joining centroid data") if self.verbose else None
-        centroid_df = pd.concat(loaded_data.get("centroid", []), axis=0)
-        centroid_df = centroid_df[~centroid_df.index.duplicated(keep='first')].reindex(self.timeline)
+        centroid_df = self.join_multimodel(loaded_data.get("centroid", []), self.n_centroids)
 
         print('all joined; concatenating everything into main_dataframe and filling nans in neural data with 0s') if self.verbose else None
 
@@ -798,6 +832,13 @@ class DataProcessor:
         df.columns = [f"meta_{col}" if "score" in col else col for col in df.columns]
 
         df[f'meta_{datatype}_source_file'] = file_index
+
+        if source:  # keep per-model meta cols distinct so same-video models join cleanly
+            df = df.rename(columns={
+                f'meta_{datatype}_closest_frame': f'meta_{datatype}_closest_frame_{source}',
+                f'meta_{datatype}_source_file': f'meta_{datatype}_source_file_{source}',
+            })
+
         print("processed pose data") if self.verbose else None
         return df
     
@@ -824,6 +865,12 @@ class DataProcessor:
         df = self.assign_closest_frame(df, original_index, datatype)
 
         df[f'meta_{datatype}_source_file'] = file_index
+
+        if source:  # keep per-model meta cols distinct so same-video models join cleanly
+            df = df.rename(columns={
+                f'meta_{datatype}_closest_frame': f'meta_{datatype}_closest_frame_{source}',
+                f'meta_{datatype}_source_file': f'meta_{datatype}_source_file_{source}',
+            })
 
         df.columns = [f"pose_{col}" for col in df.columns]
         print("processed centroid data") if self.verbose else None
@@ -1138,7 +1185,7 @@ def main():
     loader = DataLoader(config)
     loaded_data, load_errors = loader.load_all_data(max_workers=config['workers'])
     processor = DataProcessor(loader)
-    final_dataframe, process_errors = processor.process_all_data(max_workers=config['workers'])
+    out, final_dataframe, process_errors = processor.process_all_data(max_workers=config['workers'])
 
     logger.info(f"Done. Load errors: {len(load_errors)}, Process errors: {len(process_errors)}")
 
