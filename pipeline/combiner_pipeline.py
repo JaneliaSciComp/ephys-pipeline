@@ -495,6 +495,19 @@ class  DataLoader:
                                 total_drift_s=total_drift_s, drift_s_per_hour=drift_s_per_hour))
         return reports
 
+    def host_times_to_onix_datetime(self, host_index, i):
+        # map a stream's HOST timestamps to ONIX-clock datetimes for recording i via the heartbeat:
+        # host_ns -> interp onto the heartbeat clock -> start_time + tick/AcqHz. assumes a heartbeat
+        # file exists for rec i (the caller checks). uses the heartbeat 'clock' column.
+        start_time = self.loaded_data['npx_start_times'][i]
+        acq_hz = self.load_acquisition_clock_hz(self.data_paths['npx_start_times'][i])
+        heartbeat = self.load_heartbeat(self.data_paths['heartbeat_files'][i])
+        host_ns = pd.to_datetime(host_index).astype('int64').to_numpy().astype(np.float64)
+        onix_ticks = np.interp(host_ns,
+                               heartbeat['host_ts'].astype('int64').to_numpy().astype(np.float64),
+                               heartbeat['clock'].to_numpy().astype(np.float64))
+        return pd.DatetimeIndex(self.onix_ticks_to_datetime(onix_ticks, start_time, acq_hz), name='time')
+
     def build_camera_frame_times(self):
         # one source of per-rec camera frame times for pose + centroid, so timeline bounds and
         # frame pairing always use the same clock. strobe (analog) puts camera on the ONIX clock;
@@ -506,9 +519,16 @@ class  DataLoader:
         for i in range(len(start_times)):
             has_analog = i < len(paths['analog_voltage_files']) and i < len(paths['analog_clock_files'])
             if not (has_analog and start_times[i] is not None):
-                # no strobe to use -> camera stays on the cam1 host clock
-                warnings.warn(f'recording {i}: no analog strobe -> camera stays on cam1 host clock (legacy fallback)')
-                frame_times.append(cam1[i] if i < len(cam1) else None)
+                cam1_i = cam1[i] if i < len(cam1) else None
+                has_heartbeat = i < len(paths.get('heartbeat_files', [])) and start_times[i] is not None
+                if cam1_i is not None and has_heartbeat:
+                    # no strobe, but the heartbeat lets us pull the cam1 HOST times back onto the ONIX clock
+                    warnings.warn(f'\n!!! recording {i}: no analog strobe -> cam1 HOST times bridged to ONIX via heartbeat !!!\n')
+                    frame_times.append(pd.DataFrame(index=self.host_times_to_onix_datetime(cam1_i.index, i)))
+                else:
+                    # worst case: no strobe and no heartbeat -> cam1 host clock, drift remains
+                    warnings.warn(f'\n!!!!!!!!!!\n!!! recording {i}: NO analog strobe AND NO heartbeat -> camera on cam1 HOST clock, DRIFT NOT CORRECTED !!!\n!!!!!!!!!!\n')
+                    frame_times.append(cam1_i)
                 continue
             # strobe present: rising edges -> ONIX ticks -> datetimes on the neural anchor.
             # if anything here fails we let it raise, so a bad analog file is investigated not hidden.
