@@ -220,6 +220,8 @@ class  DataLoader:
                 self.data_exists[data] = True
         print('====================================================')
 
+        out['camera_frame_times'] = self.build_camera_frame_times()
+
         return out, errors
 
 ###### GET PATHS #######
@@ -427,7 +429,7 @@ class  DataLoader:
     def onix_ticks_to_datetime(self, ticks, start_time, acq_clock_hz):
         # Convert ONIX clock ticks to wall-clock datetimes using the same anchor the neural path
         # uses: start_time + ticks / acquisition_clock_hz. This is what keeps the analog (camera) and
-        # bno streams on the same clock as the neural data.
+        # bno streams on the same clock as the neural data...
         elapsed_seconds = np.asarray(ticks, dtype=np.float64) / acq_clock_hz
         return start_time + pd.to_timedelta(elapsed_seconds, unit='s')
 
@@ -489,6 +491,30 @@ class  DataLoader:
                                 total_drift_s=total_drift_s, drift_s_per_hour=drift_s_per_hour))
         return reports
 
+    def build_camera_frame_times(self):
+        # one source of per-rec camera frame times for pose + centroid, so timeline bounds and
+        # frame pairing always use the same clock. strobe (analog) puts camera on the ONIX clock;
+        # no analog -> keep the cam1 host times.
+        paths = self.data_paths
+        start_times = self.loaded_data['npx_start_times']
+        cam1 = self.loaded_data.get('timestamp', [])
+        frame_times = []
+        for i in range(len(start_times)):
+            has_analog = i < len(paths['analog_voltage_files']) and i < len(paths['analog_clock_files'])
+            if not (has_analog and start_times[i] is not None):
+                # no strobe to use -> camera stays on the cam1 host clock
+                warnings.warn(f'recording {i}: no analog strobe -> camera stays on cam1 host clock (legacy fallback)')
+                frame_times.append(cam1[i] if i < len(cam1) else None)
+                continue
+            # strobe present: rising edges -> ONIX ticks -> datetimes on the neural anchor.
+            # if anything here fails we let it raise, so a bad analog file is investigated not hidden.
+            acq_clock_hz = self.load_acquisition_clock_hz(paths['npx_start_times'][i])
+            strobe_rising_edge_ticks = self.detect_strobe_edges(paths['analog_voltage_files'][i], paths['analog_clock_files'][i])
+            strobe_rising_edge_times = self.onix_ticks_to_datetime(strobe_rising_edge_ticks, start_times[i], acq_clock_hz)
+            frame_times.append(pd.DataFrame(index=pd.DatetimeIndex(strobe_rising_edge_times, name='time')))
+            print(f'recording {i}: camera aligned to ONIX strobe ({len(strobe_rising_edge_ticks):,} pulses)') if self.verbose else None
+        return frame_times
+
     def load_bno_data(self, bno_path):
         bno_df = pd.read_csv(bno_path, header=None)
         bno_df.drop(columns=[8], inplace=True)  #TODO check if this is always the case
@@ -510,7 +536,9 @@ class  DataLoader:
         return hs
         
     def load_kilosort_data(self, kilosort_file): 
-        probe_name,shank_name = kilosort_file.split('/')[-3], kilosort_file.split('/')[-2]
+        # try making path windows compatible but also ok for linux
+        parts = os.path.normpath(kilosort_file).split(os.sep)
+        probe_name, shank_name = parts[-3], parts[-2]
 
         if shank_name is not None:
             spike_dict_name = f'probe_{probe_name}_{shank_name}'
@@ -713,6 +741,7 @@ class DataProcessor:
         out = {}
 
         ts = self.loader.loaded_data.get('timestamp',  [])
+        camera_frame_times = self.loader.loaded_data.get('camera_frame_times', [])
         sleap = self.loader.loaded_data.get('sleap', [])
         centroids = self.loader.loaded_data.get('centroid', [])
 
@@ -723,20 +752,24 @@ class DataProcessor:
 
         if self.n_sleaps:
             out['sleap'] = [None] * len(sleap)
-            tags = [path.split('/')[-2].split('_')[0] for path in self.loader.data_paths['sleap_files']] # ensure its <tag>_sleap_output or sleap_output
+            # try making path windows compatible but also ok for linux
+            tags = [os.path.basename(os.path.dirname(path)).split('_')[0] for path in self.loader.data_paths['sleap_files']] # ensure its <tag>_sleap_output or sleap_output
 
             for i in range(len(sleap)):
-                tasks.append(("sleap", i, self.process_sleap_data, (sleap[i], ts[i % len(ts)], tags[i], i)))
+                camera_time = camera_frame_times[i % len(camera_frame_times)] if camera_frame_times else ts[i % len(ts)]
+                tasks.append(("sleap", i, self.process_sleap_data, (sleap[i], camera_time, tags[i], i)))
 
 
         self.n_centroids = len(centroids) // len(ts) if ts and len(centroids) % len(ts) == 0 else 0
 
         if self.n_centroids:
             out['centroid'] = [None] * len(centroids)
-            tags = [path.split('/')[-1].split('_')[1] for path in self.loader.data_paths['centroid_files']] 
+            # try making path windows compatible but also ok for linux
+            tags = [os.path.basename(path).split('_')[1] for path in self.loader.data_paths['centroid_files']] 
 
             for i in range(len(centroids)):
-                tasks.append(("centroid", i, self.process_centroid_data, (centroids[i], ts[i % len(ts)], tags[i], i)))
+                camera_time = camera_frame_times[i % len(camera_frame_times)] if camera_frame_times else ts[i % len(ts)]
+                tasks.append(("centroid", i, self.process_centroid_data, (centroids[i], camera_time, tags[i], i)))
 
 
         n_bnos = len(bno) // len(hs) if hs and len(bno) % len(hs) == 0 else 0
@@ -941,7 +974,7 @@ class DataProcessor:
         bounds_start.append(np.asarray(npx_starts).ravel())
         bounds_end.append(np.asarray(npx_ends).ravel())
 
-        centroid_times, centroid_starts, centroid_ends = self.get_df_time(datatype="timestamp")
+        centroid_times, centroid_starts, centroid_ends = self.get_df_time(datatype="camera_frame_times")
         self.centroid_timestamps = centroid_times
         out["centroid"] = (centroid_times, centroid_starts, centroid_ends)
 
@@ -1250,6 +1283,8 @@ class DataProcessor:
         start = []
         end = []
         for file_n, df in enumerate(self.loader.loaded_data[datatype]):
+            if df is None:
+                continue
             ts  = df.index
             if self.loader.config.get('skip_frames', None) and datatype == 'centroid': # skip frames for centroid
                 skip_seconds = self.loader.config['skip_frames'][file_n] 
