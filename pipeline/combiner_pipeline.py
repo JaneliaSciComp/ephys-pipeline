@@ -49,7 +49,15 @@ try:
 except ImportError:
     from pose_cleaner import PoseCleaner
 
-# IN PROGRESS / UNTESTED -- flip to True to enable lead-offset camera alignment (offset_aligned_frame_times).
+
+# in-script config for camera/heartbeat alignment (edit here; intentionally no CLI flags rn..).
+STROBE_CHANNEL = 5             # analog channel carrying the camera trigger
+STROBE_THRESHOLD = 0.0        # volts; rising-edge crossing used for pulse detection
+N_ANALOG_CHANNELS = 12        # interleaved channels per analog sample
+HEARTBEAT_CLOCK_COL = 'clock'   # which heartbeat column to bridge on: 'clock' or 'hubclock'
+FILENAME_CLUSTER_TOL_S = 6.0    # max spread (s) of one recording's filename timestamps across streams
+
+# IN PROGRESS / UNTESTED, flip to True to enable lead-offset camera alignment (offset_aligned_frame_times).
 # in-script switch (not a CLI flag) so it stays off unless deliberately turned on here.
 CAMERA_OFFSET_ALIGN = False
 
@@ -266,8 +274,7 @@ class  DataLoader:
         # recording (their filename timestamps should be close together). It only warns, so a day
         # that is simply missing a whole stream type still runs.
 
-        filename_times_same_rec_tolerance = 6.0 # hardcoded for now
-        cluster_tolerance_seconds = self.config.get('filename_cluster_tol_s', filename_times_same_rec_tolerance) 
+        cluster_tolerance_seconds = self.config.get('filename_cluster_tol_s', FILENAME_CLUSTER_TOL_S)
 
         number_of_recordings = len(paths['npx_start_times'])
         if number_of_recordings == 0:
@@ -403,7 +410,7 @@ class  DataLoader:
         return heartbeat
 
     def detect_strobe_edges(self, analog_voltage_file, analog_clock_file,
-                            camera_channel=5, threshold=0.0, number_of_analog_channels=12):
+                            camera_channel=STROBE_CHANNEL, threshold=STROBE_THRESHOLD, number_of_analog_channels=N_ANALOG_CHANNELS):
         # Find the camera trigger pulses on the analog strobe channel and return the ONIX clock tick
         # at each rising edge. There is one rising edge per camera frame, so these ticks are the true
         # hardware frame times. We return raw ONIX ticks (uint64); the datetime conversion happens
@@ -468,7 +475,7 @@ class  DataLoader:
             drift_s_per_hour = total_drift_s = None
             if i < len(paths['heartbeat_files']):
                 hb = self.load_heartbeat(paths['heartbeat_files'][i])
-                onix_s = hb['clock'].to_numpy() / acq_clock_hz
+                onix_s = hb[HEARTBEAT_CLOCK_COL].to_numpy() / acq_clock_hz
                 onix_s = onix_s - onix_s[0]
                 host_s = (hb['host_ts'] - hb['host_ts'].iloc[0]).dt.total_seconds().to_numpy()
                 total_drift_s = float((host_s - onix_s)[-1])
@@ -505,7 +512,7 @@ class  DataLoader:
         host_ns = pd.to_datetime(host_index).astype('int64').to_numpy().astype(np.float64)
         onix_ticks = np.interp(host_ns,
                                heartbeat['host_ts'].astype('int64').to_numpy().astype(np.float64),
-                               heartbeat['clock'].to_numpy().astype(np.float64))
+                               heartbeat[HEARTBEAT_CLOCK_COL].to_numpy().astype(np.float64))
         return pd.DatetimeIndex(self.onix_ticks_to_datetime(onix_ticks, start_time, acq_hz), name='time')
 
     def build_camera_frame_times(self):
@@ -577,7 +584,7 @@ class  DataLoader:
             hb = self.load_heartbeat(paths['heartbeat_files'][i])
             cam1_clk = np.interp(cam1_host_ns,
                                  hb['host_ts'].astype('int64').to_numpy().astype(np.float64),
-                                 hb['clock'].to_numpy().astype(np.float64))
+                                 hb[HEARTBEAT_CLOCK_COL].to_numpy().astype(np.float64))
         else:
             cam1_clk = (cam1_host_ns - np.float64(pd.Timestamp(start_time).value)) / 1e9 * acq_clock_hz
 
