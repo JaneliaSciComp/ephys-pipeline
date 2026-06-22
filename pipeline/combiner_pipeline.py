@@ -227,12 +227,12 @@ class  DataLoader:
         data_dir = os.path.join(self.path, "data")
         
         all_data_paths = {
-            'npx_start_times': glob.glob(os.path.join(data_dir, '*start-time*')), 
+            'npx_start_times': sorted(glob.glob(os.path.join(data_dir, '*start-time*'))), 
             'npx_clocks': self.get_npx_clock_paths(), 
             'kilosort_files': self.get_kilosort_paths(), 
 
-            'bno_files': glob.glob(os.path.join(data_dir, '*bno055*')), 
-            'hs_files': glob.glob(os.path.join(data_dir, '*hs*')),
+            'bno_files': sorted(glob.glob(os.path.join(data_dir, '*bno055*'))), 
+            'hs_files': sorted(glob.glob(os.path.join(data_dir, '*hs*'))),
             
             # sorted() so model/video ordering is deterministic across filesystems:
             # filenames embed ISO timestamps, so lexicographic == chronological,
@@ -244,10 +244,88 @@ class  DataLoader:
             }
         
         self.data_paths = all_data_paths
+        self.check_recording_consistency(all_data_paths)
         return all_data_paths    
 
+    def check_recording_consistency(self, paths):
+        # A single day can hold several recordings. We expect one recording's worth of files for
+        # each recording. This checks that the different data streams agree on how many recs
+        # there are, and that the files we line up together belong to the same
+        # recording (their filename timestamps should be close together). It only warns, so a day
+        # that is simply missing a whole stream type still runs.
+
+        filename_times_same_rec_tolerance = 6.0 # hardcoded for now
+        cluster_tolerance_seconds = self.config.get('filename_cluster_tol_s', filename_times_same_rec_tolerance) 
+
+        number_of_recordings = len(paths['npx_start_times'])
+        if number_of_recordings == 0:
+            warnings.warn('No *start-time* files found, so we cannot tell how many recordings this day has.')
+            return
+
+        # all these streams should have exactly one file per recording.
+        one_file_per_recording = ['bno_files', 'hs_files', 'video_files', 'centroid_files', 'timestamp_files']
+        for stream_name in one_file_per_recording:
+            files_for_stream = paths.get(stream_name, [])
+            if len(files_for_stream) > 0 and len(files_for_stream) != number_of_recordings:
+                warnings.warn(
+                    f'{stream_name} has {len(files_for_stream)} files but this day has '
+                    f'{number_of_recordings} recordings. Multiple recordings from the same day '
+                    f'may not have a matching set of files.'
+                )
+
+        # The neural clocks should have one file per probe per recording.
+        number_of_probes = len(getattr(self, 'npx_probes', []))
+        clock_files = paths.get('npx_clocks', [])
+        expected_clock_files = number_of_recordings * number_of_probes
+        if len(clock_files) > 0 and number_of_probes > 0 and len(clock_files) != expected_clock_files:
+            warnings.warn(
+                f'npx_clocks has {len(clock_files)} files but we expected {expected_clock_files} '
+                f'({number_of_recordings} recordings times {number_of_probes} probes).'
+            )
+
+        # Files we pair up by position should belong to the same recording. We read the timestamp
+        # out of each filename and check that, for a given recording, they all land close together.
+        timestamp_pattern = re.compile(r'(\d{4}-\d{2}-\d{2}T\d{2}_\d{2}_\d{2})')
+
+        def read_timestamp_from_filename(file_path):
+            match = timestamp_pattern.search(os.path.basename(file_path))
+            if match is None:
+                return None
+            return pd.to_datetime(match.group(1), format='%Y-%m-%dT%H_%M_%S')
+
+        # For now only compare streams that actually have one file per recording, plus the start times.
+        streams_to_compare = ['npx_start_times']
+        for stream_name in one_file_per_recording:
+            if len(paths.get(stream_name, [])) == number_of_recordings:
+                streams_to_compare.append(stream_name)
+
+        for recording_index in range(number_of_recordings):
+            timestamps_this_recording = []
+            for stream_name in streams_to_compare:
+                file_timestamp = read_timestamp_from_filename(paths[stream_name][recording_index])
+                if file_timestamp is not None:
+                    timestamps_this_recording.append((stream_name, file_timestamp))
+
+            if len(timestamps_this_recording) < 2:
+                continue
+
+            only_the_times = [file_timestamp for stream_name, file_timestamp in timestamps_this_recording]
+            spread_seconds = (max(only_the_times) - min(only_the_times)).total_seconds()
+            if spread_seconds > cluster_tolerance_seconds:
+                which_files = ', '.join(
+                    f'{stream_name} at {file_timestamp.time()}'
+                    for stream_name, file_timestamp in timestamps_this_recording
+                )
+                warnings.warn(
+                    f'Recording {recording_index}: filename timestamps span {spread_seconds:.1f} s '
+                    f'(more than the {cluster_tolerance_seconds} s tolerance). {which_files}'
+                )
+
+        if self.verbose:
+            print(f'recording-consistency check: {number_of_recordings} recordings, {number_of_probes} probes')
+
     def get_npx_clock_paths(self,):
-        npx_clocks = glob.glob(os.path.join(self.path, 'data', '*np2-*-clock*'))
+        npx_clocks = sorted(glob.glob(os.path.join(self.path, 'data', '*np2-*-clock*')))
 
         probe_to_clocks = defaultdict(list)
 
