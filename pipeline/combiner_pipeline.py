@@ -431,6 +431,64 @@ class  DataLoader:
         elapsed_seconds = np.asarray(ticks, dtype=np.float64) / acq_clock_hz
         return start_time + pd.to_timedelta(elapsed_seconds, unit='s')
 
+    def report_timing_qc(self):
+        # read-only per-rec QC: analog strobe vs camera frames + heartbeat drift. no alignment change.
+        paths = getattr(self, 'data_paths', None) or self.get_all_data_paths()
+        reports = []
+        for i in range(len(paths['npx_start_times'])):
+            print(f'\n========== timing QC: recording {i} ==========')
+            if i >= len(paths['analog_voltage_files']) or i >= len(paths['analog_clock_files']):
+                print('  no analog strobe -> cannot characterize (legacy/fallback day)')
+                continue
+
+            start_time_file = paths['npx_start_times'][i]
+            acq_clock_hz = self.load_acquisition_clock_hz(start_time_file)
+            strobe_ticks = self.detect_strobe_edges(paths['analog_voltage_files'][i], paths['analog_clock_files'][i])
+            n_strobe = len(strobe_ticks)
+
+            # frame counts, one row/frame per camera frame
+            n_pose = None
+            if i < len(paths['sleap_files']):
+                with h5py.File(paths['sleap_files'][i], 'r') as hf:
+                    n_pose = int(hf['tracks'].shape[-1])
+            n_cam1 = sum(1 for _ in open(paths['timestamp_files'][i])) if i < len(paths['timestamp_files']) else None
+            n_centroid = sum(1 for _ in open(paths['centroid_files'][i])) if i < len(paths['centroid_files']) else None
+
+            leading_gap_s = float(strobe_ticks[0]) / acq_clock_hz
+            strobe_interval_ms = np.diff(strobe_ticks.astype(np.float64)) / acq_clock_hz * 1000
+            strobe_interval_median_ms = float(np.median(strobe_interval_ms)) if strobe_interval_ms.size else float('nan')
+
+            # heartbeat drift: host seconds minus onix seconds, both since first beat
+            drift_s_per_hour = total_drift_s = None
+            if i < len(paths['heartbeat_files']):
+                hb = self.load_heartbeat(paths['heartbeat_files'][i])
+                onix_s = hb['clock'].to_numpy() / acq_clock_hz
+                onix_s = onix_s - onix_s[0]
+                host_s = (hb['host_ts'] - hb['host_ts'].iloc[0]).dt.total_seconds().to_numpy()
+                total_drift_s = float((host_s - onix_s)[-1])
+                duration_s = float(onix_s[-1])
+                drift_s_per_hour = total_drift_s / duration_s * 3600 if duration_s else float('nan')
+
+            print(f'  strobe pulses: {n_strobe:,}   frames -> pose: {n_pose}  cam1: {n_cam1}  centroid: {n_centroid}')
+            if n_pose is not None:
+                diff = n_strobe - n_pose
+                verdict = 'match' if diff == 0 else (f'{diff} extra pulse(s), expect a few trailing' if diff > 0
+                                                     else f'{-diff} more frames than pulses -- suspicious')
+                print(f'  strobe - pose = {diff}  -> {verdict}')
+            print(f'  leading gap to first pulse: {leading_gap_s:.3f} s')
+            if strobe_interval_ms.size:
+                print(f'  strobe interval ms: median {strobe_interval_median_ms:.3f} '
+                      f'range [{strobe_interval_ms.min():.3f}, {strobe_interval_ms.max():.3f}]  (~{1000/strobe_interval_median_ms:.2f} Hz)')
+            if drift_s_per_hour is not None:
+                print(f'  heartbeat host-vs-onix drift: {total_drift_s:+.2f} s total ({drift_s_per_hour:+.2f} s/hour)')
+            else:
+                print('  no heartbeat (drift QC skipped)')
+
+            reports.append(dict(rec=i, n_strobe=n_strobe, n_pose=n_pose, n_cam1=n_cam1, n_centroid=n_centroid,
+                                leading_gap_s=leading_gap_s, strobe_interval_median_ms=strobe_interval_median_ms,
+                                total_drift_s=total_drift_s, drift_s_per_hour=drift_s_per_hour))
+        return reports
+
     def load_bno_data(self, bno_path):
         bno_df = pd.read_csv(bno_path, header=None)
         bno_df.drop(columns=[8], inplace=True)  #TODO check if this is always the case
