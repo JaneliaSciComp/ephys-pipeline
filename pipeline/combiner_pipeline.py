@@ -831,12 +831,10 @@ class DataProcessor:
                 tasks.append(("centroid", i, self.process_centroid_data, (centroids[i], camera_time, tags[i], i)))
 
 
-        n_bnos = len(bno) // len(hs) if hs and len(bno) % len(hs) == 0 else 0
-
-        if n_bnos:
+        if bno:
             out["bno"] = [None] * len(bno)
-            for i, (bno_df, hs_df) in enumerate(zip(bno, hs)):
-                tasks.append(("bno", i, self.process_bno_data, (bno_df, hs_df, i)))
+            for i, bno_df in enumerate(bno):
+                tasks.append(("bno", i, self.process_bno_data, (bno_df, i)))
         else:
             out["bno"] = []
 
@@ -941,7 +939,7 @@ class DataProcessor:
             arr[start_idx:end_idx] = 1
         new_cols[col] = arr
 
-        bno_bounds = np.array(self.all_timestamps['headstage'][1:3])
+        bno_bounds = np.array(self.all_timestamps['bno'][1:3])
         col = 'meta_bno_exists'
         existence_cols.append(col)
         arr = np.zeros(len(self.timeline), dtype=np.uint8)
@@ -1040,12 +1038,22 @@ class DataProcessor:
         bounds_start.append(np.asarray(centroid_starts).ravel())
         bounds_end.append(np.asarray(centroid_ends).ravel())
 
-        hs_times, hs_starts, hs_ends = self.get_df_time(datatype="headstage")
-        self.hs_timestamps = hs_times
-        out["headstage"] = (hs_times, hs_starts, hs_ends)
-
-        bounds_start.append(np.asarray(hs_starts).ravel())
-        bounds_end.append(np.asarray(hs_ends).ravel())
+        # bno bounds on its own ONIX clock (replaces the headstage host-time bounds, which used to
+        # drag the timeline ~30 s past the real data)
+        bno = self.loader.loaded_data.get('bno', [])
+        bno_times, bno_starts, bno_ends = [], [], []
+        for i, bno_df in enumerate(bno):
+            if bno_df is None:
+                continue
+            start_time = self.loader.loaded_data['npx_start_times'][i]
+            acq_hz = self.loader.load_acquisition_clock_hz(self.loader.data_paths['npx_start_times'][i])
+            t = pd.DatetimeIndex(self.loader.onix_ticks_to_datetime(bno_df['clock'].to_numpy(), start_time, acq_hz))
+            bno_times.append(t); bno_starts.append(t[0]); bno_ends.append(t[-1])
+        self.bno_timestamps = bno_times
+        out["bno"] = (bno_times, bno_starts, bno_ends)
+        if bno_starts:
+            bounds_start.append(np.asarray(bno_starts).ravel())
+            bounds_end.append(np.asarray(bno_ends).ravel())
 
         if len(bounds_start) == 0 or len(bounds_end) == 0:
             raise ValueError(
@@ -1160,19 +1168,24 @@ class DataProcessor:
         print("processed centroid data") if self.verbose else None
         return df
 
-    def process_bno_data(self, bno, time, file_index: int):
+    def process_bno_data(self, bno, file_index: int):
+        # bno carries its own ONIX clock column, so put it straight on the ONIX clock (like neural),
+        # instead of pairing it row-by-row to the headstage host time.
         print('processing bno data') if self.verbose else None
         datatype = 'bno'
-
-        df_w_time = self.df_w_timestamps(bno, time, datatype)
+        bno = bno.copy()
+        start_time = self.loader.loaded_data['npx_start_times'][file_index]
+        acq_hz = self.loader.load_acquisition_clock_hz(self.loader.data_paths['npx_start_times'][file_index])
+        bno.index = pd.DatetimeIndex(self.loader.onix_ticks_to_datetime(bno['clock'].to_numpy(), start_time, acq_hz), name='time')
+        bno.columns = [f'{datatype}_{c}' for c in bno.columns]
 
         if self.save_raw:
             raw_path = os.path.join(self.raw_data_path, f'raw_bno_{file_index}.parquet')
-            df_w_time.to_parquet(raw_path)
+            bno.to_parquet(raw_path)
             print(f'saved raw bno data to {raw_path}') if self.verbose else None
 
-        interp_df = self.interpolate_df_to_timeline(df_w_time, self.timeline)
-        interp_df = self.assign_closest_frame(interp_df, df_w_time.index, datatype)
+        interp_df = self.interpolate_df_to_timeline(bno, self.timeline)
+        interp_df = self.assign_closest_frame(interp_df, bno.index, datatype)
         interp_df[f'meta_{datatype}_source_file'] = file_index
 
         print('processed bno data') if self.verbose else None
