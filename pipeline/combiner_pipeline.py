@@ -241,13 +241,19 @@ class  DataLoader:
             'centroid_files': sorted(glob.glob(os.path.join(data_dir, '*centroid*'))),
             'timestamp_files': sorted(glob.glob(os.path.join(data_dir, '*timestamps*'))),
             'sleap_files': sorted(glob.glob(os.path.join(self.path, '*sleap*', '*analysis*'))), # since we might have multiple sleap dirs
+
+            # hardware-clock sources for ONIX-clock alignment (analog camera strobe + heartbeat).
+            # these can be absent on older days; that is handled downstream.
+            'analog_voltage_files': sorted(glob.glob(os.path.join(data_dir, '*analog-voltage*'))),
+            'analog_clock_files': sorted(glob.glob(os.path.join(data_dir, '*analog-clock*'))),
+            'heartbeat_files': sorted(glob.glob(os.path.join(data_dir, '*heartbeat*'))),
             }
         
         self.data_paths = all_data_paths
-        self.check_recording_consistency(all_data_paths)
+        self.check_rec_file_consistency(all_data_paths)
         return all_data_paths    
 
-    def check_recording_consistency(self, paths):
+    def check_rec_file_consistency(self, paths):
         # A single day can hold several recordings. We expect one recording's worth of files for
         # each recording. This checks that the different data streams agree on how many recs
         # there are, and that the files we line up together belong to the same
@@ -263,7 +269,8 @@ class  DataLoader:
             return
 
         # all these streams should have exactly one file per recording.
-        one_file_per_recording = ['bno_files', 'hs_files', 'video_files', 'centroid_files', 'timestamp_files']
+        one_file_per_recording = ['bno_files', 'hs_files', 'video_files', 'centroid_files', 'timestamp_files',
+                                   'analog_voltage_files', 'analog_clock_files', 'heartbeat_files']
         for stream_name in one_file_per_recording:
             files_for_stream = paths.get(stream_name, [])
             if len(files_for_stream) > 0 and len(files_for_stream) != number_of_recordings:
@@ -374,6 +381,55 @@ class  DataLoader:
         ts = pd.to_datetime(pd.read_csv(start_time_file)["Timestamp"].iloc[0])
         print(f'loaded npx start time: {start_time_file}') if self.verbose else None
         return ts
+
+    def load_acquisition_clock_hz(self, start_time_file):
+        # The ONIX acquisition clock rate (ticks per second) recorded in the start-time file.
+        # This is the same number the neural path divides ticks by; we read it here so the analog
+        # and bno conversions use the recording's own value instead of a hardcoded constant.
+        acq_clock_hz = pd.read_csv(start_time_file)['Value.AcquisitionClockHz'].iloc[0]
+        return float(acq_clock_hz)
+
+    def load_heartbeat(self, heartbeat_file):
+        # Timing aligning (host time, ONIX clock, ONIX hub clock) rows. Used for quality-control, and only
+        # as a fallback bridge (host time -> ONIX clock) on days that have no analog strobe.
+        heartbeat = pd.read_csv(heartbeat_file, header=None, names=['host_ts', 'clock', 'hubclock'])
+        heartbeat['host_ts'] = pd.to_datetime(heartbeat['host_ts'])
+        return heartbeat
+
+    def detect_strobe_edges(self, analog_voltage_file, analog_clock_file,
+                            camera_channel=5, threshold=0.0, number_of_analog_channels=12):
+        # Find the camera trigger pulses on the analog strobe channel and return the ONIX clock tick
+        # at each rising edge. There is one rising edge per camera frame, so these ticks are the true
+        # hardware frame times. We return raw ONIX ticks (uint64); the datetime conversion happens
+        # later via onix_ticks_to_datetime, exactly like the neural clock. Mirrors
+        # camera_ts_characterize.ipynb.
+
+        # one ONIX tick per analog sample; also gives us the sample count to cross-check the channels
+        analog_clock = np.memmap(analog_clock_file, dtype=np.uint64, mode='r')
+
+        # voltage is a flat float32 stream interleaving all channels per sample. It must be exactly
+        # (number of samples) x (number of channels), so check that against the clock before reshaping.
+        analog_voltage_flat = np.memmap(analog_voltage_file, dtype=np.float32, mode='r')
+        assert analog_voltage_flat.size == analog_clock.size * number_of_analog_channels, (
+            f'analog voltage has {analog_voltage_flat.size} values, which is not '
+            f'{analog_clock.size} samples x {number_of_analog_channels} channels'
+        )
+
+        # memmap so we never read the whole multi-GB file into memory; touch only the strobe channel
+        strobe_signal = analog_voltage_flat.reshape(-1, number_of_analog_channels)[:, camera_channel]
+
+        # a rising edge is where the strobe goes from at/below the threshold to above it
+        strobe_is_high = strobe_signal > threshold
+        rising_edge_samples = np.flatnonzero(~strobe_is_high[:-1] & strobe_is_high[1:]) + 1
+        rising_edge_ticks = np.asarray(analog_clock[rising_edge_samples], dtype=np.uint64)
+        return rising_edge_ticks
+
+    def onix_ticks_to_datetime(self, ticks, start_time, acq_clock_hz):
+        # Convert ONIX clock ticks to wall-clock datetimes using the same anchor the neural path
+        # uses: start_time + ticks / acquisition_clock_hz. This is what keeps the analog (camera) and
+        # bno streams on the same clock as the neural data.
+        elapsed_seconds = np.asarray(ticks, dtype=np.float64) / acq_clock_hz
+        return start_time + pd.to_timedelta(elapsed_seconds, unit='s')
 
     def load_bno_data(self, bno_path):
         bno_df = pd.read_csv(bno_path, header=None)
