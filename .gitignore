@@ -201,3 +201,6 @@ utils/fix_params_dat_path.py
 .codex
 
 temp/
+
+# local combiner alignment test outputs (never committed)
+combiner_test_outputs/
