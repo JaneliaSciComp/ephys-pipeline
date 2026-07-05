@@ -584,11 +584,10 @@ class  DataLoader:
         return frame_times
 
     def offset_aligned_frame_times(self, i, strobe_ticks, start_time, acq_clock_hz):
-        # IN PROGRESS / UNTESTED -- behind config['camera_offset_align'] (default off).
-        # the camera can start before/after the analog, so sleap frame 0 is not always strobe edge 0.
-        # find the integer offset L (frame k <-> pulse k-L) by matching cam1 host frame times to the
-        # regular strobe lattice, then give EVERY frame a lattice ONIX time, back-extrapolating the
-        # leading frames so none are dropped. falls back to frame-0<->edge-0 if counts cannot be verified.
+        # the camera can start before/after the analog, so sleap frame 0 is not always strobe edge 0. find the
+        # integer frame->pulse offset by matching cam1 host frame times to the regular strobe lattice, then give
+        # every frame a lattice onix time, back/forward-extrapolating frames outside the recorded pulses so none
+        # are dropped. gated by CAMERA_OFFSET_ALIGN. falls back to frame0<->edge0 if counts cannot be verified
         paths = self.data_paths
         sleap = self.loaded_data.get('sleap', [])
         cam1 = self.loaded_data.get('timestamp', [])
@@ -599,39 +598,57 @@ class  DataLoader:
             times = self.onix_ticks_to_datetime(strobe_ticks, start_time, acq_clock_hz)
             return pd.DataFrame(index=pd.DatetimeIndex(times, name='time'))
 
-        # verify the host-time reference (cam1) indexes the SAME frames as sleap; otherwise do not trust it
+        # verify the host-time reference (cam1) indexes the same frames as sleap, otherwise do not trust it
         if cam1_i is None or n_sleap is None or len(cam1_i) != n_sleap:
             warnings.warn(f'recording {i}: offset-align needs matching cam1/sleap frame counts '
                           f'(cam1={None if cam1_i is None else len(cam1_i)}, sleap={n_sleap}) -> using frame0<->edge0')
             return plain_strobe()
 
-        n = len(cam1_i)
-        edge0 = float(strobe_ticks[0])
+        n_frames = len(cam1_i)
         n_edges = len(strobe_ticks)
-        period = (float(strobe_ticks[-1]) - edge0) / (n_edges - 1)
-
-        # cam1 host frame times -> ONIX ticks (heartbeat if present, else start-time anchor; both fine at the
-        # start where drift ~ 0, which is where the integer offset is decided)
-        cam1_host_ns = pd.to_datetime(cam1_i.index).astype('int64').to_numpy().astype(np.float64)
-        if i < len(paths.get('heartbeat_files', [])):
-            hb = self.load_heartbeat(paths['heartbeat_files'][i])
-            cam1_clk = np.interp(cam1_host_ns,
-                                 hb['host_ts'].astype('int64').to_numpy().astype(np.float64),
-                                 hb[HEARTBEAT_CLOCK_COL].to_numpy().astype(np.float64))
-        else:
-            cam1_clk = (cam1_host_ns - np.float64(pd.Timestamp(start_time).value)) / 1e9 * acq_clock_hz
-
-        # integer offset L, robust to host-stamp jitter (median over all frames)
-        assigned = np.floor((cam1_clk - edge0) / period)
-        L = int(np.round(np.median(np.arange(n) - assigned)))
-
-        # every frame -> its pulse index -> ONIX tick (real edge where recorded, else back/forward extrapolated)
+        if n_edges < 2:
+            warnings.warn(f'recording {i}: fewer than 2 strobe pulses -> cannot build a lattice, using frame0<->edge0')
+            return plain_strobe()
         edge_ticks = np.asarray(strobe_ticks, dtype=np.float64)
-        pulse_idx = np.arange(n) - L
-        in_range = (pulse_idx >= 0) & (pulse_idx < n_edges)
-        ticks = np.where(in_range, edge_ticks[np.clip(pulse_idx, 0, n_edges - 1)], edge0 + pulse_idx * period)
+        edge0 = edge_ticks[0]
+        period = (edge_ticks[-1] - edge0) / (n_edges - 1)
+
+        # cam1 host frame times -> onix ticks via the best host<->onix bridge (heartbeat, else bno+hs, else anchor)
+        cam1_host_ns = pd.to_datetime(cam1_i.index).astype('int64').to_numpy().astype(np.float64)
+        cam1_onix_ticks = self.bridge_host_to_onix_ticks(cam1_host_ns, i)
+
+        # integer frame->pulse offset (frame k <-> pulse k - pulse_offset), floored so each frame lands on its own
+        # trigger pulse. measured separately over the first and last frames, a disagreement flags an interior drop
+        # rather than being silently averaged in (median over each window beats host-stamp jitter)
+        assigned_pulse = np.floor((cam1_onix_ticks - edge0) / period)
+        offset_per_frame = np.arange(n_frames) - assigned_pulse
+        window = min(50, n_frames // 2) if n_frames >= 2 else n_frames
+        pulse_offset_start = int(np.round(np.median(offset_per_frame[:window])))
+        pulse_offset_end = int(np.round(np.median(offset_per_frame[-window:])))
+        pulse_offset = pulse_offset_start
+
+        pulse_interval = np.diff(edge_ticks)
+        generator_gaps = int(np.sum(pulse_interval > 1.5 * np.median(pulse_interval)))
+        if pulse_offset_start != pulse_offset_end or generator_gaps > 0:
+            warnings.warn(f'recording {i}: frame<->pulse offset differs start={pulse_offset_start} end={pulse_offset_end} '
+                          f'(generator gaps {generator_gaps}) -> possible interior drop, applying start offset {pulse_offset_start}')
+
+        # camera latency (how long after its trigger a frame is host-stamped) must stay under one frame period for
+        # the floored offset to land on the right pulse, always report it
+        preceding_pulse = np.clip(np.searchsorted(edge_ticks, cam1_onix_ticks, side='right') - 1, 0, n_edges - 1)
+        within_pulse_span = (cam1_onix_ticks >= edge0) & (cam1_onix_ticks <= edge_ticks[-1])
+        if within_pulse_span.any():
+            latency_ms = float(np.median((cam1_onix_ticks - edge_ticks[preceding_pulse])[within_pulse_span])) / acq_clock_hz * 1000
+            period_ms = period / acq_clock_hz * 1000
+            exceeds = ' -- EXCEEDS period, offset may be off by a frame' if latency_ms >= period_ms else ''
+            warnings.warn(f'recording {i}: camera latency ~{latency_ms:.1f} ms, must be < frame period {period_ms:.1f} ms{exceeds}')
+
+        # every frame -> its pulse index -> onix tick (real edge where recorded, else back/forward extrapolated)
+        pulse_index = np.arange(n_frames) - pulse_offset
+        in_range = (pulse_index >= 0) & (pulse_index < n_edges)
+        ticks = np.where(in_range, edge_ticks[np.clip(pulse_index, 0, n_edges - 1)], edge0 + pulse_index * period)
         times = self.onix_ticks_to_datetime(ticks, start_time, acq_clock_hz)
-        print(f'recording {i}: offset-aligned camera (L={L}, {n:,} frames, {int((~in_range).sum())} extrapolated)') if self.verbose else None
+        print(f'recording {i}: offset-aligned camera (offset={pulse_offset}, {n_frames:,} frames, {int((~in_range).sum())} extrapolated)') if self.verbose else None
         return pd.DataFrame(index=pd.DatetimeIndex(times, name='time'))
 
     def load_bno_data(self, bno_path):
