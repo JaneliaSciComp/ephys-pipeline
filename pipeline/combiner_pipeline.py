@@ -57,9 +57,9 @@ N_ANALOG_CHANNELS = 12        # interleaved channels per analog sample
 HEARTBEAT_CLOCK_COL = 'clock'   # which heartbeat column to bridge on: 'clock' or 'hubclock'
 FILENAME_CLUSTER_TOL_S = 6.0    # max spread (s) of one recording's filename timestamps across streams
 
-# IN PROGRESS / UNTESTED, flip to True to enable lead-offset camera alignment (offset_aligned_frame_times).
-# in-script switch (not a CLI flag) so it stays off unless deliberately turned on here.
-CAMERA_OFFSET_ALIGN = False
+# align camera frames to the analog strobe with the measured integer frame->pulse offset
+# (offset_aligned_frame_times), instead of assuming frame 0 == strobe edge 0. in-script switch, not a CLI flag
+CAMERA_OFFSET_ALIGN = True
 
 # %%
 class StreamToLogger:
@@ -549,9 +549,9 @@ class  DataLoader:
         return pd.DatetimeIndex(self.onix_ticks_to_datetime(onix_ticks, start_time, acq_hz), name='time')
 
     def build_camera_frame_times(self):
-        # one source of per-rec camera frame times for pose + centroid, so timeline bounds and
-        # frame pairing always use the same clock. strobe (analog) puts camera on the ONIX clock;
-        # no analog -> keep the cam1 host times.
+        # one source of per-rec camera frame times for pose + centroid, so timeline bounds and frame pairing
+        # always use the same clock. strobe (analog) puts camera on the onix clock, no analog -> bridge the
+        # cam1 host times onto onix if a bridge exists, else keep the host times
         paths = self.data_paths
         start_times = self.loaded_data['npx_start_times']
         cam1 = self.loaded_data.get('timestamp', [])
@@ -560,14 +560,19 @@ class  DataLoader:
             has_analog = i < len(paths['analog_voltage_files']) and i < len(paths['analog_clock_files'])
             if not (has_analog and start_times[i] is not None):
                 cam1_i = cam1[i] if i < len(cam1) else None
-                has_heartbeat = i < len(paths.get('heartbeat_files', [])) and start_times[i] is not None
-                if cam1_i is not None and has_heartbeat:
-                    # no strobe, but the heartbeat lets us pull the cam1 HOST times back onto the ONIX clock
-                    warnings.warn(f'\n!!! recording {i}: no analog strobe -> cam1 HOST times bridged to ONIX via heartbeat !!!\n')
+                has_bridge = start_times[i] is not None and (
+                    i < len(paths.get('heartbeat_files', []))
+                    or (i < len(paths.get('bno_files', [])) and i < len(paths.get('hs_files', []))))
+                if cam1_i is not None and has_bridge:
+                    # no strobe, but the heartbeat (or bno+hs) bridge pulls the cam1 host times onto the onix
+                    # clock. drift is corrected, but the camera exposure lag (~tens of ms, rig-dependent) is NOT
+                    # removed here since there are no strobe pulses to measure it from, so these frames sit that
+                    # lag after the trigger instant that analog-day frames land on
+                    warnings.warn(f'\n!!! recording {i}: no analog strobe -> cam1 host times bridged to onix, drift corrected but camera lag (~tens of ms) NOT removed (no pulses to measure it) !!!\n')
                     frame_times.append(pd.DataFrame(index=self.host_times_to_onix_datetime(cam1_i.index, i)))
                 else:
-                    # worst case: no strobe and no heartbeat -> cam1 host clock, drift remains
-                    warnings.warn(f'\n!!!!!!!!!!\n!!! recording {i}: NO analog strobe AND NO heartbeat -> camera on cam1 HOST clock, DRIFT NOT CORRECTED !!!\n!!!!!!!!!!\n')
+                    # worst case: no strobe and no bridge -> cam1 host clock, drift remains
+                    warnings.warn(f'\n!!!!!!!!!!\n!!! recording {i}: NO analog strobe AND NO bridge -> camera on cam1 host clock, DRIFT NOT CORRECTED !!!\n!!!!!!!!!!\n')
                     frame_times.append(cam1_i)
                 continue
             # strobe present: rising edges -> ONIX ticks -> datetimes on the neural anchor.
@@ -575,7 +580,7 @@ class  DataLoader:
             acq_clock_hz = self.load_acquisition_clock_hz(paths['npx_start_times'][i])
             strobe_rising_edge_ticks = self.detect_strobe_edges(paths['analog_voltage_files'][i], paths['analog_clock_files'][i])
             if CAMERA_OFFSET_ALIGN:
-                # IN PROGRESS / UNTESTED (default off): correct for the camera starting before/after the analog
+                # correct for the camera starting before/after the analog via the measured frame->pulse offset
                 frame_times.append(self.offset_aligned_frame_times(i, strobe_rising_edge_ticks, start_times[i], acq_clock_hz))
             else:
                 strobe_rising_edge_times = self.onix_ticks_to_datetime(strobe_rising_edge_ticks, start_times[i], acq_clock_hz)
@@ -1278,9 +1283,9 @@ class DataProcessor:
             warnings.warn(f'{datatype} has less frames than time, assuming they align at start')  if self.verbose else None
             time_tmp = time_tmp.iloc[:len(df_tmp)]
         elif len(df_tmp) > len(time_tmp):
-            # NOTE: more frames than strobe times = camera started before the analog (frames lead the pulses).
-            # this "align at start" truncates the tail and mis-pairs by the lead offset -- this case is NOT
-            # handled here; CAMERA_OFFSET_ALIGN (offset_aligned_frame_times) is the in-progress fix for it.
+            # more frames than time only happens with camera alignment off (raw strobe edges, one time per
+            # pulse), this "align at start" truncates the tail and mis-pairs by the lead offset. with
+            # CAMERA_OFFSET_ALIGN on, offset_aligned_frame_times gives one time per frame so lengths match here
             warnings.warn(f'{datatype} has more frames than time, assuming they align at start') if self.verbose else None
             df_tmp = df_tmp.iloc[:len(time_tmp)]    
 
@@ -1417,8 +1422,11 @@ class DataProcessor:
         npx_t_s   = np.empty(npx_t.shape, dtype=object)
 
         for i in range(npx_t.shape[0]):
+            # divide neural ticks by the recording's own AcquisitionClockHz, the same clock rate the camera and
+            # bno conversions use, so neural cannot drift relative to them if a rig's rate is not 2.5e8
+            acq_clock_hz = self.loader.load_acquisition_clock_hz(self.loader.data_paths['npx_start_times'][i])
             for j in range(npx_t.shape[1]):
-                npx_t_s[i, j] = np.asarray(npx_t[i, j], dtype=np.float64) / self.loader.config["tick_res"]
+                npx_t_s[i, j] = np.asarray(npx_t[i, j], dtype=np.float64) / acq_clock_hz
                 npx_starts[i, j] = self.loader.loaded_data["npx_start_times"][i] + pd.Timedelta(seconds=npx_t_s[i, j][0])
                 npx_ends[i, j]   = self.loader.loaded_data["npx_start_times"][i] + pd.Timedelta(seconds=npx_t_s[i, j][-1])
 
