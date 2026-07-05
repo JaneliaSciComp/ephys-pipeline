@@ -502,17 +502,50 @@ class  DataLoader:
                                 total_drift_s=total_drift_s, drift_s_per_hour=drift_s_per_hour))
         return reports
 
+    def bridge_host_to_onix_ticks(self, host_ns, i):
+        # map host-clock timestamps (ns) to onix clock ticks for recording i via the best available
+        # host<->onix bridge: heartbeat, else bno055 clock paired with headstage host time, else the
+        # start-time anchor (no bridge). np.interp maps within the bridge span, timestamps outside the
+        # span (leading/trailing camera frames) are linearly extrapolated at the bridge's whole-recording
+        # rate instead of clamped to an endpoint tick, so a camera-leads recording's early frames get real times
+        paths = self.data_paths
+        host_ns = np.asarray(host_ns, dtype=np.float64)
+
+        if i < len(paths.get('heartbeat_files', [])):
+            heartbeat = self.load_heartbeat(paths['heartbeat_files'][i])
+            bridge_host = heartbeat['host_ts'].astype('int64').to_numpy().astype(np.float64)
+            bridge_onix = heartbeat[HEARTBEAT_CLOCK_COL].to_numpy().astype(np.float64)
+        elif i < len(paths.get('bno_files', [])) and i < len(paths.get('hs_files', [])):
+            bridge_onix = self.load_bno_data(paths['bno_files'][i])['clock'].to_numpy().astype(np.float64)
+            headstage = self.load_headstage_data(paths['hs_files'][i])
+            bridge_host = pd.to_datetime(headstage.index).astype('int64').to_numpy().astype(np.float64)
+        else:
+            # no bridge, fall back to the start-time anchor, which does not correct host drift
+            start_time = self.loaded_data['npx_start_times'][i]
+            acq_hz = self.load_acquisition_clock_hz(paths['npx_start_times'][i])
+            return (host_ns - np.float64(pd.Timestamp(start_time).value)) / 1e9 * acq_hz
+
+        # interpolate via best bridge option, careful not to clamp any times outside the times in the bridge file
+        onix_ticks = np.interp(host_ns, bridge_host, bridge_onix)
+        rate = (bridge_onix[-1] - bridge_onix[0]) / (bridge_host[-1] - bridge_host[0])
+        below, above = host_ns < bridge_host[0], host_ns > bridge_host[-1]
+        #just extrapolate simply by a constant rate that is over whole bridge
+        if below.any():
+            onix_ticks[below] = bridge_onix[0] + rate * (host_ns[below] - bridge_host[0])
+        if above.any():
+            onix_ticks[above] = bridge_onix[-1] + rate * (host_ns[above] - bridge_host[-1])
+        # add warning if extrapolation used for more than 2% of frames
+        if (below | above).sum() > 0.02 * len(host_ns):
+            warnings.warn(f'recording {i}: host<->onix bridge extrapolated for {(below | above).sum()} of {len(host_ns)} frames ({(below | above).sum()/len(host_ns)*100:.1f}%)')
+        return onix_ticks
+
     def host_times_to_onix_datetime(self, host_index, i):
-        # map a stream's HOST timestamps to ONIX-clock datetimes for recording i via the heartbeat:
-        # host_ns -> interp onto the heartbeat clock -> start_time + tick/AcqHz. assumes a heartbeat
-        # file exists for rec i (the caller checks). uses the heartbeat 'clock' column.
+        # map a stream's host timestamps to onix-clock datetimes for recording i via the best host<->onix
+        # bridge (heartbeat, else bno+hs, else start-time anchor), see bridge_host_to_onix_ticks
         start_time = self.loaded_data['npx_start_times'][i]
         acq_hz = self.load_acquisition_clock_hz(self.data_paths['npx_start_times'][i])
-        heartbeat = self.load_heartbeat(self.data_paths['heartbeat_files'][i])
         host_ns = pd.to_datetime(host_index).astype('int64').to_numpy().astype(np.float64)
-        onix_ticks = np.interp(host_ns,
-                               heartbeat['host_ts'].astype('int64').to_numpy().astype(np.float64),
-                               heartbeat[HEARTBEAT_CLOCK_COL].to_numpy().astype(np.float64))
+        onix_ticks = self.bridge_host_to_onix_ticks(host_ns, i) #outsource this instead of hb only mapping, so can pick whatever bridge is present/best
         return pd.DatetimeIndex(self.onix_ticks_to_datetime(onix_ticks, start_time, acq_hz), name='time')
 
     def build_camera_frame_times(self):
