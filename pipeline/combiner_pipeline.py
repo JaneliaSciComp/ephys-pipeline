@@ -136,6 +136,7 @@ class  DataLoader:
         self.recording = config.get('recording')
         self.output_path = config.get('output_path')
         self.config['tick_res'] = config.get('tick_res', 2.5e8)
+        self.precomputed_pulses = {}   # {rec: {...}} strobe pulses stashed for the diagnostic figs, no re-read
  
     def load_all_data(self, max_workers=4):
         if not hasattr(self, "data_paths"):
@@ -654,6 +655,14 @@ class  DataLoader:
         ticks = np.where(in_range, edge_ticks[np.clip(pulse_index, 0, n_edges - 1)], edge0 + pulse_index * period)
         times = self.onix_ticks_to_datetime(ticks, start_time, acq_clock_hz)
         print(f'recording {i}: offset-aligned camera (offset={pulse_offset}, {n_frames:,} frames, {int((~in_range).sum())} extrapolated)') if self.verbose else None
+        # stash the detected pulses so the diagnostic figs reuse them instead of re-reading the analog file
+        self.precomputed_pulses[i] = {
+            'pulse_ticks': edge_ticks,
+            'pulse_offset': pulse_offset,
+            'pulse_offset_end': pulse_offset_end,
+            'period': period,
+            'generator_gaps': generator_gaps,
+        }
         return pd.DataFrame(index=pd.DatetimeIndex(times, name='time'))
 
     def load_bno_data(self, bno_path):
@@ -871,6 +880,26 @@ class DataProcessor:
         final_parquet_path = os.path.join(self.loader.output_path, f'final_df_{self.loader.recording}.parquet')
         print(f'saving final dataframe to parquet at \n {final_parquet_path}') if self.verbose else None
         final_dataframe.to_parquet(final_parquet_path)
+
+        if self.loader.config.get('plot', True):
+            # diagnostic figures are a best-effort side effect, the parquet is already saved above, so never
+            # let a plotting or import problem (eg a missing dependency in the env) crash the combiner run
+            try:
+                try:   # lazy import avoids a circular import, try/except matches the pose_cleaner import above
+                    from .combiner_fig_helpers import save_all_figs
+                except ImportError:
+                    from combiner_fig_helpers import save_all_figs  # type: ignore  # flat path for script-run, pylance only sees the package path
+                log_path = os.path.join(self.loader.output_path, 'combiner.log')
+                n_recs = len(self.loader.loaded_data.get('camera_frame_times', []))
+                for rec in range(n_recs):
+                    try:
+                        save_all_figs(self.loader, rec, final_dataframe, self.loader.output_path,
+                                      precomputed_pulses=self.loader.precomputed_pulses,
+                                      combiner_log_path=log_path)
+                    except Exception:
+                        warnings.warn(f'combiner figs failed for rec {rec}: {traceback.format_exc()}')
+            except Exception:
+                warnings.warn(f'combiner diagnostic figures skipped (import or setup failed): {traceback.format_exc()}')
 
         return out, final_dataframe, errors
 
